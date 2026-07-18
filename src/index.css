@@ -1,0 +1,78 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Space Mono", monospace;
+  --font-display: "Syne", sans-serif;
+  --font-mono: "Space Mono", monospace;
+  
+  --color-accent: #FFD700;
+  --color-ink: #F8F7F4;
+  --color-bg-dark: #111113;
+  --color-card-dark: #18181b;
+  
+  --color-primary-50: #fffbeb;
+  --color-primary-100: #fef3c7;
+  --color-primary-200: #fde68a;
+  --color-primary-500: #FFD700;
+  --color-primary-600: #eab308;
+  --color-primary-700: #ca8a04;
+  --color-primary-900: #854d0e;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #111113;
+  color: #F8F7F4;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #111113;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(248, 247, 244, 0.2);
+  border-radius: 0px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #FFD700;
+}
+
+/* Brutalist Polish Cards */
+.glass-panel {
+  background: #18181b;
+  border: 1px solid rgba(248, 247, 244, 0.12);
+  box-shadow: 0 4px 12px 0 rgba(0, 0, 0, 0.4);
+}
+
+.glass-panel-light {
+  background: #111113;
+  border: 1px solid rgba(248, 247, 244, 0.08);
+}
+
+.glow-btn {
+  position: relative;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.glow-btn::after {
+  content: '';
+  position: absolute;
+  top: 0; left: -100%;
+  width: 50%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 215, 0, 0.15), transparent);
+  transition: all 0.6s ease;
+}
+
+.glow-btn:hover::after {
+  left: 150%;
+}
+
+

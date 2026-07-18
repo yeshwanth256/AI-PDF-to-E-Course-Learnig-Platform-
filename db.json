@@ -1,0 +1,234 @@
+{
+  "courses": [
+    {
+      "id": "prompt-eng-101",
+      "title": "Prompt Engineering Essentials",
+      "subtitle": "Master the art of instructing LLMs for production",
+      "description": "Learn core prompt engineering patterns including Few-Shot prompting, Chain of Thought, Structured Output, and ReAct framework to unlock the full potential of Large Language Models.",
+      "estimatedTime": "2 hours",
+      "difficulty": "Beginner",
+      "learningObjectives": [
+        "Understand the mechanics of Large Language Models and tokenization",
+        "Write robust system instructions and configure temperature/top-k parameters",
+        "Implement Few-Shot, Chain-of-Thought, and Meta-Prompting patterns",
+        "Format outputs reliably as JSON, markdown, or custom schemas"
+      ],
+      "prerequisites": [
+        "Basic understanding of software APIs",
+        "Familiarity with general conversational AI tools"
+      ],
+      "skillsLearned": [
+        "Structured Prompting",
+        "Chain of Thought",
+        "Output Schema Engineering",
+        "System Configuration"
+      ],
+      "tags": [
+        "AI",
+        "Prompt Engineering",
+        "LLM",
+        "Developer Essentials"
+      ],
+      "categories": [
+        "AI & ML",
+        "Computer Science"
+      ],
+      "createdAt": "2026-07-18T17:39:29.581Z",
+      "mindMap": {
+        "nodes": [
+          {
+            "id": "root",
+            "label": "Prompt Engineering Essentials",
+            "type": "course"
+          },
+          {
+            "id": "ch1",
+            "label": "Chapter 1: LLM Core Concepts",
+            "type": "chapter"
+          },
+          {
+            "id": "ch2",
+            "label": "Chapter 2: Prompting Patterns",
+            "type": "chapter"
+          },
+          {
+            "id": "l1_1",
+            "label": "1.1: Tokens & Generation Mechanics",
+            "type": "lesson"
+          },
+          {
+            "id": "l1_2",
+            "label": "1.2: System Instructions & Parameters",
+            "type": "lesson"
+          },
+          {
+            "id": "l2_1",
+            "label": "2.1: Few-Shot & Chain-of-Thought",
+            "type": "lesson"
+          },
+          {
+            "id": "l2_2",
+            "label": "2.2: Structured Output Engineering",
+            "type": "lesson"
+          }
+        ],
+        "edges": [
+          {
+            "from": "root",
+            "to": "ch1"
+          },
+          {
+            "from": "root",
+            "to": "ch2"
+          },
+          {
+            "from": "ch1",
+            "to": "l1_1"
+          },
+          {
+            "from": "ch1",
+            "to": "l1_2"
+          },
+          {
+            "from": "ch2",
+            "to": "l2_1"
+          },
+          {
+            "from": "ch2",
+            "to": "l2_2"
+          }
+        ]
+      },
+      "chapters": [
+        {
+          "id": "ch1",
+          "title": "LLM Core Concepts",
+          "description": "Learn the foundational mechanisms under the hood of Large Language Models, including tokens, temperature, top_k, and context windows.",
+          "lessons": [
+            {
+              "id": "l1_1",
+              "title": "Tokens & Generation Mechanics",
+              "readingTime": "10 mins",
+              "content": "### Introduction to Generation Mechanics\n\nAt their core, Large Language Models (LLMs) are statistical text predictors. They do not comprehend words in the way humans do; instead, they process information in numerical pieces called **tokens**.\n\n> [!NOTE]\n> A token is roughly equivalent to 4 characters or 0.75 words of English text. For example, the word \"prompt\" is typically a single token, whereas \"unbelievable\" might be split into \"un\", \"believ\", \"able\".\n\n---\n\n### How LLMs Generate Text\n\nWhen you feed a prompt to an LLM, the model does the following:\n1. **Tokenizes the Input**: Converts your characters into an array of token IDs.\n2. **Contextual Evaluation**: Runs the tokens through billions of attention-mechanism parameters to analyze relationships between words.\n3. **Probability Calculation**: Calculates the probability of every possible token in its vocabulary being the next suitable token.\n4. **Sampling & Output**: Selects a token based on your sampling settings, appends it to the context, and repeats this cycle until an End-of-Sequence (EOS) token is reached.\n\n---\n\n### Key Generation Parameters\n\nTo write effective prompts, you must understand three critical variables that control sampling randomness:\n\n| Parameter | Type | Default | Description |\n| :--- | :--- | :--- | :--- |\n| **Temperature** | float | 0.7 | Controls output creativity. Higher values (e.g. 1.2) cause wider sampling variance. Lower values (e.g. 0.1) force the model to select only the absolute highest probability tokens. |\n| **Top-P** | float | 0.95 | Nucleus sampling. Filters the vocabulary down to the smallest set of tokens whose cumulative probability is at least P. |\n| **Top-K** | integer | 40 | Limits selection to the top K most likely tokens. Reduces potential gibberish at high temperatures. |\n\n> [!TIP]\n> Use **low temperature (0.1 - 0.3)** for tasks requiring precision and reproducibility (such as mathematical computations, code syntax, or structured JSON extraction). Use **high temperature (0.8 - 1.2)** for brainstorming, creative writing, or diverse narrative outputs.",
+              "exercises": [
+                "Compare the output of a prompt generated at temperature 0.1 vs temperature 1.5",
+                "Calculate roughly how many tokens are in the sentence: 'Large Language Models are revolutionizing product design.'"
+              ]
+            },
+            {
+              "id": "l1_2",
+              "title": "System Instructions & Parameters",
+              "readingTime": "12 mins",
+              "content": "### The Power of System Instructions\n\nA **System Instruction** (sometimes referred to as a System Prompt) is a high-priority, persistent instruction given to the LLM before any user conversation. It establishes the model's persona, boundaries, stylistic rules, and runtime constraints.\n\n```ts\n// System instruction example\nconst systemInstruction = \"You are a professional software architect. Speak concisely and use structured tables.\";\n```\n\n---\n\n### Establishing Strong Persona Guidelines\n\nWhen crafting system instructions, follow these rules:\n\n1. **Be Precise**: Instead of saying \"Don't write long code,\" say \"Write at most 50 lines of code per file.\"\n2. **Assign a Role**: Specify who the model is (e.g., \"Senior QA Analyst\", \"Technical Illustrator\").\n3. **Set Tone and Style**: Instruct the model on how to speak (e.g., \"Direct, scientific, and objective\").\n4. **Define Safeguards**: Set constraints to handle errors (e.g., \"If you do not know the answer, respond with 'Information not present in source'\").\n\n> [!IMPORTANT]\n> System instructions have a massive influence on the subsequent chat history. They are injected as an ambient guiding context that cannot easily be overridden by user inputs.",
+              "exercises": [
+                "Draft a system instruction designed to make a chatbot respond only in clean JSON.",
+                "Explain why setting boundaries in the system instruction is more effective than setting them in user prompts."
+              ]
+            }
+          ],
+          "quizzes": [
+            {
+              "id": "q1_1",
+              "question": "What is roughly equivalent to 1 token in English text?",
+              "options": [
+                "1 full page",
+                "Roughly 4 characters or 0.75 words",
+                "Exactly 1 syllable",
+                "A whole paragraph"
+              ],
+              "answer": 1,
+              "explanation": "A token is the base unit of text processed by an LLM, corresponding roughly to 4 characters or 0.75 words in English.",
+              "hint": "It's smaller than a full word but larger than a single character."
+            },
+            {
+              "id": "q1_2",
+              "question": "Which parameter should you lower to make an LLM's responses more predictable and factual?",
+              "options": [
+                "Top-K",
+                "Context Length",
+                "Temperature",
+                "Token Limit"
+              ],
+              "answer": 2,
+              "explanation": "Lowering the temperature decreases sampling randomness, forcing the model to pick highly probable tokens, which yields predictable and consistent outputs.",
+              "hint": "Think about the thermodynamic scale—cooling down reduces molecular movement and randomness."
+            }
+          ],
+          "flashcards": [
+            {
+              "id": "f1_1",
+              "question": "What is tokenization?",
+              "answer": "The process of splitting text into smaller numerical units (tokens) so a Large Language Model can process and predict words."
+            },
+            {
+              "id": "f1_2",
+              "question": "What is the recommended Temperature for structured JSON generation?",
+              "answer": "A low temperature, such as 0.0 to 0.2, to minimize randomness and guarantee structural compliance."
+            }
+          ]
+        },
+        {
+          "id": "ch2",
+          "title": "Prompting Patterns",
+          "description": "Explore advanced prompt design templates like Chain of Thought and Structured Outputs.",
+          "lessons": [
+            {
+              "id": "l2_1",
+              "title": "Few-Shot & Chain-of-Thought",
+              "readingTime": "15 mins",
+              "content": "### Zero-Shot vs Few-Shot Prompting\n\n- **Zero-Shot**: Asking the model to perform a task without giving any examples.\n  *Example: \"Classify this email as spam or ham: [email text]\"*\n- **Few-Shot**: Providing the model with 2 or more complete examples of inputs and desired outputs, showcasing the style, format, and reasoning expected.\n  *Example: \"Text: [A] -> Sentiment: Positive. Text: [B] -> Sentiment: Negative. Text: [C] -> Sentiment: \"*\n\n---\n\n### Chain of Thought (CoT)\n\nChain of Thought is a prompting technique that instructs the model to explicitly list its step-by-step reasoning *before* outputting the final conclusion.\n\n> [!IMPORTANT]\n> LLMs compute linearly token-by-token. If you force a model to answer instantly, it has less 'cognitive workspace' to compute complex logic. Forcing it to output its reasoning step-by-step leverages intermediate tokens as scratchpad memory, significantly increasing logical and mathematical accuracy.\n\n#### Typical Chain-of-Thought Structure:\n```\nPrompt: \"A company started with 10 employees, hired 5 more, and let go of 3. How many employees do they have? Think step-by-step.\"\nResponse:\n1. Initial employees = 10\n2. Hired 5: 10 + 5 = 15\n3. Let go of 3: 15 - 3 = 12\nThe final answer is 12.\n```",
+              "exercises": [
+                "Write a prompt using Few-Shot technique to classify reviews as positive, negative, or neutral with precise tone analysis.",
+                "Explain why Chain of Thought reduces mathematical calculation errors in LLMs."
+              ]
+            }
+          ],
+          "quizzes": [
+            {
+              "id": "q2_1",
+              "question": "Why does Chain of Thought (CoT) prompting increase LLM reasoning accuracy?",
+              "options": [
+                "It increases the vocabulary size of the model",
+                "It bypasses the temperature config",
+                "It provides a scratchpad memory in the form of intermediate output tokens",
+                "It stops the model from hallucinating completely"
+              ],
+              "answer": 2,
+              "explanation": "Because LLMs generate token-by-token, writing intermediate reasoning steps allows the model to calculate logical paths in its context memory before arriving at the conclusion.",
+              "hint": "Think of it as showing your work in a math exam."
+            }
+          ],
+          "flashcards": [
+            {
+              "id": "f2_1",
+              "question": "What is Few-Shot prompting?",
+              "answer": "Providing the model with several exemplary input-output pairs to demonstrate the desired format, style, or task execution before requesting the final result."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "stats": {
+    "learningHours": 1.2,
+    "learningStreak": 3,
+    "xpPoints": 120,
+    "completedLessons": [],
+    "completedCourses": [],
+    "quizScores": {},
+    "badges": [
+      "Curious Explorer"
+    ],
+    "recentActivity": [
+      {
+        "id": "act-1",
+        "type": "course_start",
+        "title": "Started Prompt Engineering Essentials",
+        "timestamp": "2026-07-17T17:39:29.581Z",
+        "xp": 50
+      }
+    ]
+  },
+  "chatHistories": {},
+  "certificates": []
+}

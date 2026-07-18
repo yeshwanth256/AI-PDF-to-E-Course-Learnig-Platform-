@@ -1,0 +1,6 @@
+{
+  "name": "AI PDF to E-Course Learning Platform",
+  "description": "An enterprise-grade platform that parses PDFs and generates structured e-learning courses, quizzes, flashcards, mind maps, and a companion chatbot.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
