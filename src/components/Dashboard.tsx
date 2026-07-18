@@ -4,23 +4,31 @@ import {
   BookOpen, Award, Flame, Zap, Trophy, History, ArrowRight, BookMarked, 
   BrainCircuit, Briefcase, ChevronRight, BarChart3, Users, Compass, 
   Sliders, Terminal, FileCheck, CheckCircle2, ShieldCheck, Heart, Sparkles, 
-  TrendingUp, Activity, RefreshCw, FileText
+  TrendingUp, Activity, RefreshCw, FileText, Code2
 } from 'lucide-react';
 import { exportCourseOutlinePDF } from '../lib/pdfExport';
+import { CodingGames } from './CodingGames';
+import { CareerPath } from './CareerPath';
+import { LearningGoalWidget } from './LearningGoalWidget';
+import { ChallengeHub } from './ChallengeHub';
+import { DsaArena } from './DsaArena';
 
 interface DashboardProps {
   stats: UserStats;
   courses: Course[];
+  token: string | null;
+  onUpdateStats: (newStats: UserStats) => void;
   onSelectCourse: (courseId: string) => void;
   onNavigateToUpload: () => void;
   onNavigateToCertificates: () => void;
 }
 
-type DashboardTab = 'overview' | 'skill_tree' | 'career' | 'instructor';
+type DashboardTab = 'overview' | 'skill_tree' | 'career' | 'instructor' | 'coding_games' | 'dsa_playground';
 
-export function Dashboard({ stats, courses, onSelectCourse, onNavigateToUpload, onNavigateToCertificates }: DashboardProps) {
+export function Dashboard({ stats, courses, token, onUpdateStats, onSelectCourse, onNavigateToUpload, onNavigateToCertificates }: DashboardProps) {
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [careerSubTab, setCareerSubTab] = useState<'map' | 'resume'>('map');
 
   const dynamicCategories = React.useMemo(() => {
     const cats = new Set<string>();
@@ -297,6 +305,12 @@ export function Dashboard({ stats, courses, onSelectCourse, onNavigateToUpload, 
           {/* Right: Stream & Leaderboard */}
           <div className="space-y-6">
             
+            {/* Learning Goal Widget */}
+            <LearningGoalWidget stats={stats} token={token} onUpdateStats={onUpdateStats} />
+
+            {/* Quests and Challenges Hub */}
+            <ChallengeHub stats={stats} token={token} onUpdateStats={onUpdateStats} />
+
             {/* Gamified Leaderboard */}
             <div className="bg-[#18181b] border border-white/10 p-5 font-mono">
               <h3 className="text-xs font-bold text-[#F8F7F4] flex items-center gap-2 mb-4 border-b border-white/5 pb-2 uppercase tracking-wider">
@@ -449,141 +463,169 @@ export function Dashboard({ stats, courses, onSelectCourse, onNavigateToUpload, 
           </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
-          {/* Left Panel: Resume Scanner */}
-          <div className="lg:col-span-2 space-y-6">
-            <div className="bg-[#18181b] border border-white/10 p-5 shadow-sm">
-              <h4 className="text-xs font-bold text-amber-400 uppercase tracking-widest border-b border-white/5 pb-2 mb-4">Resume Gap Analyzer</h4>
-              
-              <div className="space-y-4">
-                <p className="text-[#F8F7F4]/60 leading-relaxed text-[11px] uppercase">
-                  Paste your resume text below. Our AI mentor will review keywords against modern job descriptions in RAG, Prompt Engineering, and machine learning architectures.
-                </p>
-
-                <textarea 
-                  value={resumeText}
-                  onChange={(e) => setResumeText(e.target.value)}
-                  rows={5}
-                  className="w-full bg-[#111113] border border-white/10 text-xs text-[#F8F7F4] p-3 focus:border-amber-400 focus:outline-none"
-                  placeholder="Paste your resume content or career bio here..."
-                />
-
-                <div className="flex justify-between items-center">
-                  <span className="text-[9px] text-[#F8F7F4]/40 uppercase">SOC-2 Protected data transfer active</span>
-                  <button 
-                    onClick={triggerAnalyzeResume}
-                    disabled={analyzingResume || !resumeText.trim()}
-                    className="px-4 py-2 bg-amber-400 text-amber-950 hover:bg-amber-300 font-bold uppercase text-[11px] tracking-wider flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
-                  >
-                    {analyzingResume ? (
-                      <>
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        <span>Scanning Database...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Compass className="w-3.5 h-3.5" />
-                        <span>Run Audit Scanner</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* Analysis Result Box */}
-              {resumeAnalysisResult && (
-                <div className="mt-6 pt-5 border-t border-white/15 space-y-4 animate-fade-in text-[11px] uppercase">
-                  <div className="flex items-center gap-4 bg-[#111113] p-3.5 border border-white/5">
-                    <div className="w-16 h-16 rounded-full border-4 border-amber-400 flex items-center justify-center shrink-0">
-                      <span className="font-black text-amber-400 text-base">{resumeAnalysisResult.score}%</span>
-                    </div>
-                    <div>
-                      <h5 className="font-bold text-[#F8F7F4] text-xs">AI Keyword Sync Score</h5>
-                      <p className="text-[10px] text-[#F8F7F4]/40 mt-1 leading-normal">Your resume ranks highly for standard development, but lacks critical semantic search terms.</p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-red-500/5 border border-red-500/20 p-3.5 text-red-200">
-                      <h6 className="font-bold text-red-400 text-[10px] tracking-wider border-b border-red-500/10 pb-1 mb-2">Detected Gaps</h6>
-                      <ul className="space-y-1.5 list-disc pl-4 text-[10px] leading-relaxed">
-                        {resumeAnalysisResult.weaknesses.map((item: string, i: number) => <li key={i}>{item}</li>)}
-                      </ul>
-                    </div>
-
-                    <div className="bg-emerald-500/5 border border-emerald-500/20 p-3.5 text-emerald-200">
-                      <h6 className="font-bold text-emerald-400 text-[10px] tracking-wider border-b border-emerald-500/10 pb-1 mb-2">Target Enhancements</h6>
-                      <ul className="space-y-1.5 list-disc pl-4 text-[10px] leading-relaxed">
-                        {resumeAnalysisResult.strengths.map((item: string, i: number) => <li key={i}>{item}</li>)}
-                      </ul>
-                    </div>
-                  </div>
-
-                  <div className="bg-[#111113] border border-[#FFD700]/30 p-4 text-amber-300">
-                    <h6 className="font-bold text-amber-400 text-[10px] tracking-wider mb-2">Quantified bullet points to copy:</h6>
-                    <ul className="space-y-2 list-decimal pl-4 text-[10px] leading-relaxed">
-                      {resumeAnalysisResult.recommendations.map((rec: string, i: number) => <li key={i}>{rec}</li>)}
-                    </ul>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Right Panel: Certifications & Roadmap */}
-          <div className="space-y-6">
-            
-            {/* Certifications Card */}
-            <div className="bg-[#18181b] border border-white/10 p-5 font-mono">
-              <h4 className="text-xs font-bold text-[#F8F7F4] border-b border-white/5 pb-2.5 mb-3.5 uppercase tracking-wider">Suggested Certifications</h4>
-              
-              <div className="space-y-3">
-                {[
-                  { name: "Google Cloud AI Engineer", code: "GCP-AI-2026", cost: "Included", difficulty: "Hard" },
-                  { name: "Certified Prompt Architect", code: "CPA-V3", cost: "Earned via Platform", difficulty: "Medium" },
-                  { name: "Enterprise Vector DB Specialist", code: "EVBS-ML", cost: "Included", difficulty: "Expert" }
-                ].map((cert, idx) => (
-                  <div key={idx} className="bg-[#111113] p-3.5 border border-white/5 flex flex-col justify-between">
-                    <div>
-                      <span className="text-[8px] text-amber-400 font-bold block">{cert.code}</span>
-                      <h5 className="font-bold text-[#F8F7F4] text-[11px] mt-0.5 uppercase tracking-tight leading-tight">{cert.name}</h5>
-                    </div>
-                    <div className="flex justify-between text-[9px] text-[#F8F7F4]/40 uppercase mt-3 pt-2.5 border-t border-white/5">
-                      <span>Fee: {cert.cost}</span>
-                      <span className="text-amber-400 font-bold">{cert.difficulty}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Custom Engineer Roadmap Checkpoints */}
-            <div className="bg-[#18181b] border border-white/10 p-5 font-mono">
-              <h4 className="text-xs font-bold text-[#F8F7F4] border-b border-white/5 pb-2.5 mb-3.5 uppercase tracking-wider">Roadmap Checkpoints</h4>
-              
-              <div className="space-y-3">
-                {[
-                  { label: "Understand Cosine Similarity bounds", done: true },
-                  { label: "Compile local vector store using BM25", done: stats.xpPoints >= 100 },
-                  { label: "Orchestrate 3 concurrent tutor agent loops", done: stats.xpPoints >= 250 },
-                  { label: "Deploy a RAG evaluation benchmark matrix", done: false },
-                ].map((task, idx) => (
-                  <div key={idx} className="flex items-center gap-2.5 text-[10px] text-[#F8F7F4]/60 uppercase">
-                    {task.done ? (
-                      <span className="text-emerald-400 shrink-0">✓</span>
-                    ) : (
-                      <span className="text-amber-400 shrink-0">◷</span>
-                    )}
-                    <span className={task.done ? 'line-through text-[#F8F7F4]/30' : ''}>{task.label}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-          </div>
-
+        {/* Career Sub-tab Selection */}
+        <div className="flex flex-wrap border-b border-white/5 pb-2 gap-3 text-xs font-bold uppercase">
+          <button
+            onClick={() => setCareerSubTab('map')}
+            className={`px-4 py-2 border transition-all rounded-sm cursor-pointer ${
+              careerSubTab === 'map'
+                ? 'bg-amber-400/15 border-amber-400 text-amber-300'
+                : 'bg-[#18181b] border-white/5 text-[#F8F7F4]/50 hover:text-[#F8F7F4]/85 hover:bg-white/5'
+            }`}
+          >
+            [1] Interactive Syllabus Map
+          </button>
+          <button
+            onClick={() => setCareerSubTab('resume')}
+            className={`px-4 py-2 border transition-all rounded-sm cursor-pointer ${
+              careerSubTab === 'resume'
+                ? 'bg-amber-400/15 border-amber-400 text-amber-300'
+                : 'bg-[#18181b] border-white/5 text-[#F8F7F4]/50 hover:text-[#F8F7F4]/85 hover:bg-white/5'
+            }`}
+          >
+            [2] Resume Gap Analyzer & Audits
+          </button>
         </div>
+
+        {careerSubTab === 'map' ? (
+          <CareerPath stats={stats} onUpdateStats={onUpdateStats} />
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            
+            {/* Left Panel: Resume Scanner */}
+            <div className="lg:col-span-2 space-y-6">
+              <div className="bg-[#18181b] border border-white/10 p-5 shadow-sm">
+                <h4 className="text-xs font-bold text-amber-400 uppercase tracking-widest border-b border-white/5 pb-2 mb-4">Resume Gap Analyzer</h4>
+                
+                <div className="space-y-4">
+                  <p className="text-[#F8F7F4]/60 leading-relaxed text-[11px] uppercase">
+                    Paste your resume text below. Our AI mentor will review keywords against modern job descriptions in RAG, Prompt Engineering, and machine learning architectures.
+                  </p>
+
+                  <textarea 
+                    value={resumeText}
+                    onChange={(e) => setResumeText(e.target.value)}
+                    rows={5}
+                    className="w-full bg-[#111113] border border-white/10 text-xs text-[#F8F7F4] p-3 focus:border-amber-400 focus:outline-none"
+                    placeholder="Paste your resume content or career bio here..."
+                  />
+
+                  <div className="flex justify-between items-center">
+                    <span className="text-[9px] text-[#F8F7F4]/40 uppercase">SOC-2 Protected data transfer active</span>
+                    <button 
+                      onClick={triggerAnalyzeResume}
+                      disabled={analyzingResume || !resumeText.trim()}
+                      className="px-4 py-2 bg-amber-400 text-amber-950 hover:bg-amber-300 font-bold uppercase text-[11px] tracking-wider flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                    >
+                      {analyzingResume ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Scanning Database...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Compass className="w-3.5 h-3.5" />
+                          <span>Run Audit Scanner</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Analysis Result Box */}
+                {resumeAnalysisResult && (
+                  <div className="mt-6 pt-5 border-t border-white/15 space-y-4 animate-fade-in text-[11px] uppercase">
+                    <div className="flex items-center gap-4 bg-[#111113] p-3.5 border border-white/5">
+                      <div className="w-16 h-16 rounded-full border-4 border-amber-400 flex items-center justify-center shrink-0">
+                        <span className="font-black text-amber-400 text-base">{resumeAnalysisResult.score}%</span>
+                      </div>
+                      <div>
+                        <h5 className="font-bold text-[#F8F7F4] text-xs">AI Keyword Sync Score</h5>
+                        <p className="text-[10px] text-[#F8F7F4]/40 mt-1 leading-normal">Your resume ranks highly for standard development, but lacks critical semantic search terms.</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="bg-red-500/5 border border-red-500/20 p-3.5 text-red-200">
+                        <h6 className="font-bold text-red-400 text-[10px] tracking-wider border-b border-red-500/10 pb-1 mb-2">Detected Gaps</h6>
+                        <ul className="space-y-1.5 list-disc pl-4 text-[10px] leading-relaxed">
+                          {resumeAnalysisResult.weaknesses.map((item: string, i: number) => <li key={i}>{item}</li>)}
+                        </ul>
+                      </div>
+
+                      <div className="bg-emerald-500/5 border border-emerald-500/20 p-3.5 text-emerald-200">
+                        <h6 className="font-bold text-emerald-400 text-[10px] tracking-wider border-b border-emerald-500/10 pb-1 mb-2">Target Enhancements</h6>
+                        <ul className="space-y-1.5 list-disc pl-4 text-[10px] leading-relaxed">
+                          {resumeAnalysisResult.strengths.map((item: string, i: number) => <li key={i}>{item}</li>)}
+                        </ul>
+                      </div>
+                    </div>
+
+                    <div className="bg-[#111113] border border-[#FFD700]/30 p-4 text-amber-300">
+                      <h6 className="font-bold text-amber-400 text-[10px] tracking-wider mb-2">Quantified bullet points to copy:</h6>
+                      <ul className="space-y-2 list-decimal pl-4 text-[10px] leading-relaxed">
+                        {resumeAnalysisResult.recommendations.map((rec: string, i: number) => <li key={i}>{rec}</li>)}
+                      </ul>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Right Panel: Certifications & Roadmap */}
+            <div className="space-y-6">
+              
+              {/* Certifications Card */}
+              <div className="bg-[#18181b] border border-white/10 p-5 font-mono">
+                <h4 className="text-xs font-bold text-[#F8F7F4] border-b border-white/5 pb-2.5 mb-3.5 uppercase tracking-wider">Suggested Certifications</h4>
+                
+                <div className="space-y-3">
+                  {[
+                    { name: "Google Cloud AI Engineer", code: "GCP-AI-2026", cost: "Included", difficulty: "Hard" },
+                    { name: "Certified Prompt Architect", code: "CPA-V3", cost: "Earned via Platform", difficulty: "Medium" },
+                    { name: "Enterprise Vector DB Specialist", code: "EVBS-ML", cost: "Included", difficulty: "Expert" }
+                  ].map((cert, idx) => (
+                    <div key={idx} className="bg-[#111113] p-3.5 border border-white/5 flex flex-col justify-between">
+                      <div>
+                        <span className="text-[8px] text-amber-400 font-bold block">{cert.code}</span>
+                        <h5 className="font-bold text-[#F8F7F4] text-[11px] mt-0.5 uppercase tracking-tight leading-tight">{cert.name}</h5>
+                      </div>
+                      <div className="flex justify-between text-[9px] text-[#F8F7F4]/40 uppercase mt-3 pt-2.5 border-t border-white/5">
+                        <span>Fee: {cert.cost}</span>
+                        <span className="text-amber-400 font-bold">{cert.difficulty}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Custom Engineer Roadmap Checkpoints */}
+              <div className="bg-[#18181b] border border-white/10 p-5 font-mono">
+                <h4 className="text-xs font-bold text-[#F8F7F4] border-b border-white/5 pb-2.5 mb-3.5 uppercase tracking-wider">Roadmap Checkpoints</h4>
+                
+                <div className="space-y-3">
+                  {[
+                    { label: "Understand Cosine Similarity bounds", done: true },
+                    { label: "Compile local vector store using BM25", done: stats.xpPoints >= 100 },
+                    { label: "Orchestrate 3 concurrent tutor agent loops", done: stats.xpPoints >= 250 },
+                    { label: "Deploy a RAG evaluation benchmark matrix", done: false },
+                  ].map((task, idx) => (
+                    <div key={idx} className="flex items-center gap-2.5 text-[10px] text-[#F8F7F4]/60 uppercase">
+                      {task.done ? (
+                        <span className="text-emerald-400 shrink-0">✓</span>
+                      ) : (
+                        <span className="text-amber-400 shrink-0">◷</span>
+                      )}
+                      <span className={task.done ? 'line-through text-[#F8F7F4]/30' : ''}>{task.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+        )}
       </div>
     );
   };
@@ -772,7 +814,9 @@ export function Dashboard({ stats, courses, onSelectCourse, onNavigateToUpload, 
           { id: 'overview', label: '[01] Master Overview', icon: <BookOpen className="w-3.5 h-3.5" /> },
           { id: 'skill_tree', label: '[02] Gamified Skill Tree', icon: <BrainCircuit className="w-3.5 h-3.5" /> },
           { id: 'career', label: '[03] AI Career Mentor', icon: <Briefcase className="w-3.5 h-3.5" /> },
-          { id: 'instructor', label: '[04] Instructor Dashboard', icon: <BarChart3 className="w-3.5 h-3.5" /> }
+          { id: 'instructor', label: '[04] Instructor Dashboard', icon: <BarChart3 className="w-3.5 h-3.5" /> },
+          { id: 'coding_games', label: '[05] Coding Games Arena', icon: <Terminal className="w-3.5 h-3.5 text-amber-400 animate-pulse" /> },
+          { id: 'dsa_playground', label: '[06] DSA Practice Arena', icon: <Code2 className="w-3.5 h-3.5 text-emerald-400 animate-pulse" /> }
         ].map((tab) => (
           <button
             key={tab.id}
@@ -795,6 +839,8 @@ export function Dashboard({ stats, courses, onSelectCourse, onNavigateToUpload, 
         {activeTab === 'skill_tree' && renderSkillTree()}
         {activeTab === 'career' && renderCareerCoach()}
         {activeTab === 'instructor' && renderInstructor()}
+        {activeTab === 'coding_games' && <CodingGames stats={stats} token={token} onUpdateStats={onUpdateStats} />}
+        {activeTab === 'dsa_playground' && <DsaArena stats={stats} token={token} onUpdateStats={onUpdateStats} />}
       </div>
 
     </div>

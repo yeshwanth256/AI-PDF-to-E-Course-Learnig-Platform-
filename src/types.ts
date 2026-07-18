@@ -83,11 +83,18 @@ export interface UserStats {
   badges: string[]; // Earned badges
   recentActivity: {
     id: string;
-    type: 'lesson_complete' | 'quiz_complete' | 'course_start' | 'chat_message' | 'flashcard_review';
+    type: 'lesson_complete' | 'quiz_complete' | 'course_start' | 'chat_message' | 'flashcard_review' | 'game_complete' | 'daily_goal_complete' | 'dsa_complete' | 'challenge_complete' | 'quest_complete';
     title: string;
     timestamp: string;
     xp: number;
   }[];
+  dailyStudyTarget?: number; // target in minutes
+  dailyStudyProgress?: number; // accumulated study seconds today
+  lastStudyDate?: string; // date string (YYYY-MM-DD) for resetting progress daily
+  completedDsa?: string[]; // list of completed DSA problem IDs
+  completedDaily?: string[]; // list of daily challenge IDs completed today
+  completedWeekly?: string[]; // list of weekly quest IDs completed this week
+  lastChallengeResetDate?: string; // date string for challenges resetting (YYYY-MM-DD)
 }
 
 export interface ChatMessage {
@@ -115,4 +122,37 @@ export interface Certificate {
   userName: string;
   completionDate: string;
   verificationLink: string;
+}
+
+export interface AIVideoSlide {
+  slideNumber: number;
+  slideTitle: string;
+  slidePoints: string[];
+  visualPrompt: string;
+  spokenText: string;
+  avatarExpression: 'smiling' | 'thoughtful' | 'explaining' | 'pointing' | 'neutral';
+}
+
+export interface AIVideo {
+  id: string;
+  userId: string;
+  courseId: string;
+  language: string;
+  videoTitle: string;
+  estimatedDuration: string;
+  slides: AIVideoSlide[];
+  createdAt: string;
+}
+
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  provider: 'email' | 'google' | 'github';
+  stats: UserStats;
+}
+
+export interface AuthResponse {
+  token: string;
+  user: User;
 }

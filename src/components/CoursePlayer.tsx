@@ -5,10 +5,11 @@ import {
   BookOpen, Trophy, Compass, HelpCircle, CheckCircle2, Circle, Send, Sparkles, 
   ChevronRight, BrainCircuit, Lightbulb, RotateCcw, AlertTriangle, BookOpenCheck,
   Award, MessageSquare, ChevronDown, Check, GraduationCap, RefreshCw,
-  Settings, Sliders, Volume2, Mic, MicOff, Play, Code2, Copy, FileText,
-  GitMerge, Server, Lock, Terminal
+  Settings, Sliders, Volume2, VolumeX, Mic, MicOff, Play, Pause, Code2, Copy, FileText,
+  GitMerge, Server, Lock, Terminal, Video, Languages, SkipForward
 } from 'lucide-react';
 import { exportCourseOutlinePDF, exportLessonPDF } from '../lib/pdfExport';
+import { AIVideoService } from '../lib/videoService';
 
 interface CoursePlayerProps {
   course: Course;
@@ -20,7 +21,7 @@ interface CoursePlayerProps {
   onGraduated: (courseId: string) => void;
 }
 
-type WorkspaceTab = 'lesson' | 'mindmap' | 'quiz' | 'flashcards' | 'sandbox' | 'diagrams' | 'notes';
+type WorkspaceTab = 'lesson' | 'mindmap' | 'quiz' | 'flashcards' | 'sandbox' | 'diagrams' | 'notes' | 'video';
 
 type AgentRole = 'general' | 'tutor' | 'quiz_master' | 'flashcard_bot' | 'research' | 'code_reviewer' | 'interview_coach' | 'career_mentor';
 
@@ -114,6 +115,135 @@ solveAlgorithm();`);
   const [generatedNotes, setGeneratedNotes] = useState<string>('');
   const [generatingNotes, setGeneratingNotes] = useState(false);
 
+  // AI Video Explainer States
+  const [videoLanguage, setVideoLanguage] = useState<string>('English');
+  const [showVideoInline, setShowVideoInline] = useState(false);
+  const [activeVideo, setActiveVideo] = useState<any | null>(null);
+  const [previousVideos, setPreviousVideos] = useState<any[]>([]);
+  const [videoLoading, setVideoLoading] = useState(false);
+  const [videoError, setVideoError] = useState<string | null>(null);
+  const [currentSlideIdx, setCurrentSlideIdx] = useState(0);
+  const [videoPlaying, setVideoPlaying] = useState(false);
+  const [videoVoiceSpeed, setVideoVoiceSpeed] = useState<number>(1.0);
+  const [videoIsMuted, setVideoIsMuted] = useState(false);
+  const slideUtteranceRef = useRef<any>(null);
+
+  // Fetch previously generated videos for this course
+  useEffect(() => {
+    const fetchVideos = async () => {
+      try {
+        const data = await AIVideoService.getVideos(course.id);
+        setPreviousVideos(data);
+        if (data && data.length > 0) {
+          setActiveVideo(data[0]);
+          setVideoLanguage(data[0].language);
+        }
+      } catch (err) {
+        console.error("Failed to fetch existing course videos using AI Video Service", err);
+      }
+    };
+    fetchVideos();
+  }, [course.id]);
+
+  // Voice player synthesizer and auto-progress simulation handler
+  useEffect(() => {
+    if (videoPlaying && activeVideo) {
+      const slide = activeVideo.slides[currentSlideIdx];
+      if (slide) {
+        // Cancel any pending speech first
+        window.speechSynthesis.cancel();
+
+        if (!videoIsMuted) {
+          const localeMap: { [key: string]: string } = {
+            'english': 'en-US',
+            'spanish': 'es-ES',
+            'french': 'fr-FR',
+            'german': 'de-DE',
+            'hindi': 'hi-IN',
+            'japanese': 'ja-JP',
+            'chinese': 'zh-CN',
+            'telugu': 'te-IN',
+            'tamil': 'ta-IN',
+            'arabic': 'ar-SA',
+            'russian': 'ru-RU',
+            'portuguese': 'pt-PT'
+          };
+
+          const cleanText = slide.spokenText.replace(/[\#\*\_`\>]/g, '');
+          const utterance = new SpeechSynthesisUtterance(cleanText);
+          utterance.rate = videoVoiceSpeed;
+
+          const targetLocale = localeMap[videoLanguage.toLowerCase()] || 'en-US';
+          const voices = window.speechSynthesis.getVoices();
+          const matchedVoice = voices.find(v => v.lang.startsWith(targetLocale) || v.lang.startsWith(targetLocale.split('-')[0]));
+          if (matchedVoice) {
+            utterance.voice = matchedVoice;
+          }
+
+          utterance.onend = () => {
+            if (currentSlideIdx < activeVideo.slides.length - 1) {
+              setCurrentSlideIdx(prev => prev + 1);
+            } else {
+              setVideoPlaying(false);
+            }
+          };
+
+          utterance.onerror = () => {
+            // No operation
+          };
+
+          slideUtteranceRef.current = utterance;
+          window.speechSynthesis.speak(utterance);
+        } else {
+          // If muted, simulate dynamic visual slide timing based on speech word length
+          const wordCount = slide.spokenText.split(/\s+/).length;
+          const durationMs = Math.max(4000, wordCount * 250); // Minimum 4s, or roughly 240 words-per-minute
+          const timer = setTimeout(() => {
+            if (currentSlideIdx < activeVideo.slides.length - 1) {
+              setCurrentSlideIdx(prev => prev + 1);
+            } else {
+              setVideoPlaying(false);
+            }
+          }, durationMs);
+
+          return () => clearTimeout(timer);
+        }
+      }
+    } else {
+      window.speechSynthesis.cancel();
+    }
+
+    return () => {
+      window.speechSynthesis.cancel();
+    };
+  }, [videoPlaying, currentSlideIdx, activeVideo, videoLanguage, videoIsMuted, videoVoiceSpeed]);
+
+  const handleGenerateVideo = async (targetLang?: string) => {
+    const lang = targetLang || videoLanguage;
+    setVideoLoading(true);
+    setVideoError(null);
+    setVideoPlaying(false);
+    window.speechSynthesis.cancel();
+
+    try {
+      const data = await AIVideoService.generateVideo(course.id, lang);
+      setActiveVideo(data);
+      setCurrentSlideIdx(0);
+      setVideoPlaying(true);
+
+      // Add to cached previous videos list if not already there
+      setPreviousVideos(prev => {
+        if (prev.some(v => v.id === data.id)) return prev;
+        return [data, ...prev];
+      });
+
+    } catch (err: any) {
+      setVideoError(err.message || 'Error compiling your multi-lingual AI explanation video.');
+    } finally {
+      setVideoLoading(false);
+    }
+  };
+
   // Find active records
   const selectedChapter = course.chapters.find(ch => ch.id === selectedChapterId) || course.chapters[0];
   const selectedLesson = selectedChapter?.lessons.find(l => l.id === selectedLessonId) || selectedChapter?.lessons[0];
@@ -129,9 +259,13 @@ solveAlgorithm();`);
       setLessonExercises([]);
 
       try {
+        const token = localStorage.getItem('auth_token');
         const response = await fetch('/api/lessons/generate', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          },
           body: JSON.stringify({
             courseId: course.id,
             chapterId: selectedChapterId,
@@ -260,12 +394,16 @@ solveAlgorithm();`);
     const startT = performance.now();
 
     try {
+      const token = localStorage.getItem('auth_token');
       // Modify payload to inject Agent parameters
       const historyText = chatMessages.slice(1).map(m => `${m.role === 'user' ? 'Student' : 'AI Agent'}: ${m.text}`).join('\n');
       
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({
           courseId: course.id,
           messages: [
@@ -699,7 +837,8 @@ Understanding physical states requires modeling probability distributions using 
               { id: 'flashcards', label: 'Cards', icon: <HelpCircle className="w-3.5 h-3.5" /> },
               { id: 'sandbox', label: 'Code editor', icon: <Code2 className="w-3.5 h-3.5" /> },
               { id: 'diagrams', label: 'AI Diagrams', icon: <GitMerge className="w-3.5 h-3.5" /> },
-              { id: 'notes', label: 'AI Notes', icon: <FileText className="w-3.5 h-3.5" /> }
+              { id: 'notes', label: 'AI Notes', icon: <FileText className="w-3.5 h-3.5" /> },
+              { id: 'video', label: 'AI Video Explainer', icon: <Video className="w-3.5 h-3.5" /> }
             ].map((tab) => {
               const active = activeTab === tab.id;
               return (
@@ -767,6 +906,256 @@ Understanding physical states requires modeling probability distributions using 
                       </button>
                     )}
                   </div>
+
+                  {/* GENERATE VIDEO TOGGLE CONTROL */}
+                  <div className="bg-[#18181b] border border-white/10 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-2">
+                      <Video className="w-4 h-4 text-amber-400" />
+                      <div>
+                        <h3 className="font-bold text-xs text-[#F8F7F4] tracking-wider">GENERATE AI VIDEO LECTURE</h3>
+                        <p className="text-[9px] text-[#F8F7F4]/40 mt-0.5 normal-case">Translate topics to an advanced stage with live speech, GUI mockups and concrete examples.</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 self-end sm:self-auto">
+                      {/* Language selection */}
+                      <div className="flex items-center gap-1.5 font-mono text-[10px]">
+                        <span className="text-[#F8F7F4]/50">NARRATOR:</span>
+                        <select
+                          value={videoLanguage}
+                          onChange={(e) => {
+                            const newLang = e.target.value;
+                            setVideoLanguage(newLang);
+                            if (showVideoInline) {
+                              handleGenerateVideo(newLang);
+                            }
+                          }}
+                          className="bg-[#111113] border border-white/10 text-white p-1 text-[10px] focus:outline-none uppercase"
+                        >
+                          {['English', 'Spanish', 'French', 'German', 'Hindi', 'Japanese', 'Chinese', 'Telugu', 'Tamil', 'Arabic', 'Russian', 'Portuguese'].map((lang) => (
+                            <option key={lang} value={lang}>{lang}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Toggle */}
+                      <button
+                        onClick={() => {
+                          const nextVal = !showVideoInline;
+                          setShowVideoInline(nextVal);
+                          if (nextVal && !activeVideo) {
+                            handleGenerateVideo();
+                          }
+                        }}
+                        className={`px-3 py-1.5 border text-[10px] font-bold uppercase transition flex items-center gap-1.5 cursor-pointer rounded-sm ${
+                          showVideoInline 
+                            ? 'bg-amber-400 border-amber-400 text-amber-950 font-black' 
+                            : 'bg-white/5 border-white/10 text-amber-400 hover:border-amber-400'
+                        }`}
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>{showVideoInline ? 'Video Active' : 'Generate Video'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* INLINE VIDEO DISPLAY PANEL */}
+                  {showVideoInline && (
+                    <div className="border border-white/10 bg-[#141416] p-4 space-y-4 rounded-sm">
+                      {videoLoading ? (
+                        <div className="p-10 text-center space-y-3">
+                          <RefreshCw className="w-7 h-7 text-amber-400 animate-spin mx-auto" />
+                          <p className="text-[10px] uppercase text-amber-400 tracking-wider">Compiling detailed advanced stage video &amp; GUI layout in {videoLanguage}...</p>
+                        </div>
+                      ) : videoError ? (
+                        <div className="p-6 text-center space-y-3 bg-rose-500/10 border border-rose-500/20">
+                          <AlertTriangle className="w-7 h-7 text-rose-400 mx-auto" />
+                          <p className="text-[10px] text-rose-200 uppercase">{videoError}</p>
+                          <button
+                            onClick={() => handleGenerateVideo()}
+                            className="px-3 py-1 border border-rose-500 text-rose-400 text-[10px] hover:bg-rose-500/5 cursor-pointer uppercase"
+                          >
+                            Retry Generation
+                          </button>
+                        </div>
+                      ) : activeVideo ? (
+                        <div className="space-y-4">
+                          {/* Mini player stage */}
+                          <div className="aspect-[21/9] bg-[#0c0c0e] border border-white/5 relative overflow-hidden flex flex-col justify-between">
+                            
+                            {/* Slide grid area */}
+                            <div className="flex-1 flex overflow-hidden">
+                              {/* Avatar left */}
+                              <div className="w-1/4 border-r border-white/5 bg-[#121214] flex flex-col items-center justify-center p-2 relative">
+                                <div className="absolute w-16 h-16 rounded-full bg-amber-400/5 blur-xl" />
+                                <div className="relative w-10 h-10 flex items-center justify-center z-10">
+                                  {videoPlaying && (
+                                    <div className="absolute inset-0 border border-amber-400/20 rounded-full animate-ping" />
+                                  )}
+                                  <div className="w-9 h-9 bg-[#18181b] border border-amber-400/70 flex items-center justify-center rounded-full">
+                                    <svg className="w-7 h-7" viewBox="0 0 48 48">
+                                      <path d="M12,42 C12,34 18,32 24,32 C30,32 36,34 36,42" fill="none" stroke="#FFD700" strokeWidth="1.5" />
+                                      <circle cx="24" cy="20" r="10" className="fill-[#111113] stroke-amber-400 stroke-[1.5]" />
+                                      {activeVideo.slides[currentSlideIdx]?.avatarExpression === 'smiling' && (
+                                        <>
+                                          <circle cx="20" cy="18" r="1.5" fill="#FFD700" />
+                                          <circle cx="28" cy="18" r="1.5" fill="#FFD700" />
+                                          <path d="M21,23 Q24,26 27,23" fill="none" stroke="#FFD700" strokeWidth="1.5" strokeLinecap="round" />
+                                        </>
+                                      )}
+                                      {activeVideo.slides[currentSlideIdx]?.avatarExpression === 'explaining' && (
+                                        <>
+                                          <line x1="18" y1="18" x2="22" y2="17" stroke="#FFD700" strokeWidth="1.5" />
+                                          <line x1="26" y1="17" x2="30" y2="18" stroke="#FFD700" strokeWidth="1.5" />
+                                          <circle cx="20" cy="19" r="1.5" fill="#FFD700" />
+                                          <circle cx="28" cy="19" r="1.5" fill="#FFD700" />
+                                          <circle cx="24" cy="24" r="2.5" fill="#FFD700" className={videoPlaying ? "animate-pulse" : ""} />
+                                        </>
+                                      )}
+                                      {activeVideo.slides[currentSlideIdx]?.avatarExpression === 'thoughtful' && (
+                                        <>
+                                          <circle cx="20" cy="19" r="1.2" fill="#FFD700" />
+                                          <circle cx="28" cy="19" r="1.2" fill="#FFD700" />
+                                          <line x1="21" y1="23" x2="27" y2="23" stroke="#FFD700" strokeWidth="1.5" />
+                                        </>
+                                      )}
+                                      {activeVideo.slides[currentSlideIdx]?.avatarExpression === 'pointing' && (
+                                        <>
+                                          <circle cx="19" cy="18" r="1.5" fill="#FFD700" />
+                                          <circle cx="29" cy="18" r="1.5" fill="#FFD700" />
+                                          <path d="M21,23 Q24,25 27,23" fill="none" stroke="#FFD700" strokeWidth="1.5" />
+                                          <line x1="30" y1="25" x2="42" y2="20" stroke="#FFD700" strokeWidth="1.5" strokeLinecap="round" />
+                                        </>
+                                      )}
+                                      {(!activeVideo.slides[currentSlideIdx]?.avatarExpression || activeVideo.slides[currentSlideIdx]?.avatarExpression === 'neutral') && (
+                                        <>
+                                          <circle cx="20" cy="18" r="1.5" fill="#FFD700" />
+                                          <circle cx="28" cy="18" r="1.5" fill="#FFD700" />
+                                          <line x1="21" y1="24" x2="27" y2="24" stroke="#FFD700" strokeWidth="1.5" />
+                                        </>
+                                      )}
+                                    </svg>
+                                  </div>
+                                </div>
+                                <span className="text-[7px] text-[#F8F7F4]/40 uppercase font-bold mt-1 tracking-wider truncate max-w-full">
+                                  {videoPlaying ? `🗣️ speaking` : '⏸️ paused'}
+                                </span>
+                              </div>
+
+                              {/* Slide right */}
+                              <div className="flex-1 p-3.5 bg-[#0f0f11] flex flex-col justify-between relative overflow-hidden">
+                                <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.01)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.01)_1px,transparent_1px)] bg-[size:12px_12px]" />
+                                <div className="z-10 space-y-1.5 relative">
+                                  <div className="flex justify-between items-center text-[7px] font-bold text-amber-400">
+                                    <span>TOPIC: {activeVideo.videoTitle}</span>
+                                    <span>{currentSlideIdx + 1}/{activeVideo.slides.length}</span>
+                                  </div>
+                                  <h4 className="text-[10px] font-bold text-[#F8F7F4] uppercase border-b border-white/5 pb-0.5 tracking-tight truncate">
+                                    {activeVideo.slides[currentSlideIdx]?.slideTitle}
+                                  </h4>
+                                  <div className="space-y-1 pl-1">
+                                    {activeVideo.slides[currentSlideIdx]?.slidePoints?.slice(0, 3).map((pt: string, ptIdx: number) => (
+                                      <div key={ptIdx} className="flex gap-1 items-start text-[8px] uppercase text-[#F8F7F4]/80">
+                                        <span className="text-amber-400 shrink-0">&bull;</span>
+                                        <span className="truncate">{pt}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* Mini diagram or GUI prompt description */}
+                                <div className="z-10 bg-[#141416]/90 border border-white/5 px-2 py-1 text-[7px] text-amber-300/80 truncate font-mono uppercase">
+                                  <span>GUI SYSTEM: {activeVideo.slides[currentSlideIdx]?.visualPrompt}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Live Subtitle captions */}
+                            <div className="bg-black/95 p-2 text-center text-[9px] min-h-[2.5rem] border-t border-white/5 flex items-center justify-center font-mono">
+                              <p className="text-amber-200 max-w-2xl line-clamp-2 uppercase">
+                                {activeVideo.slides[currentSlideIdx]?.spokenText}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Control actions bar */}
+                          <div className="flex items-center justify-between gap-4 font-mono text-[9px]">
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => {
+                                  if (currentSlideIdx > 0) {
+                                    setCurrentSlideIdx(prev => prev - 1);
+                                  }
+                                }}
+                                disabled={currentSlideIdx === 0}
+                                className="p-1 border border-white/10 hover:border-amber-400/50 disabled:opacity-35 cursor-pointer text-[#F8F7F4]"
+                              >
+                                <SkipForward className="w-3.5 h-3.5 rotate-180" />
+                              </button>
+
+                              <button
+                                onClick={() => setVideoPlaying(!videoPlaying)}
+                                className={`px-2.5 py-1 flex items-center gap-1 border text-[9px] font-bold uppercase transition cursor-pointer ${
+                                  videoPlaying 
+                                    ? 'bg-amber-400/10 border-amber-400 text-amber-400' 
+                                    : 'bg-white/5 border-white/10 text-white hover:border-amber-400'
+                                }`}
+                              >
+                                {videoPlaying ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                                <span>{videoPlaying ? 'Pause' : 'Play'}</span>
+                              </button>
+
+                              <button
+                                onClick={() => {
+                                  if (currentSlideIdx < activeVideo.slides.length - 1) {
+                                    setCurrentSlideIdx(prev => prev + 1);
+                                  }
+                                }}
+                                disabled={currentSlideIdx === activeVideo.slides.length - 1}
+                                className="p-1 border border-white/10 hover:border-amber-400/50 disabled:opacity-35 cursor-pointer text-[#F8F7F4]"
+                              >
+                                <SkipForward className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+
+                            {/* Slide indicators */}
+                            <div className="flex gap-1 flex-1 max-w-xs mx-4">
+                              {activeVideo.slides.map((_: any, idx: number) => (
+                                <button
+                                  key={idx}
+                                  onClick={() => setCurrentSlideIdx(idx)}
+                                  className={`h-1.5 flex-1 transition ${idx === currentSlideIdx ? 'bg-amber-400' : 'bg-white/10'}`}
+                                />
+                              ))}
+                            </div>
+
+                            {/* Mute and Speed */}
+                            <div className="flex items-center gap-2">
+                              <select
+                                value={videoVoiceSpeed}
+                                onChange={(e) => setVideoVoiceSpeed(parseFloat(e.target.value))}
+                                className="bg-[#111113] border border-white/10 text-[#F8F7F4]/80 p-0.5 text-[8px]"
+                              >
+                                <option value="0.75">0.75x</option>
+                                <option value="1.0">1.0x</option>
+                                <option value="1.25">1.25x</option>
+                              </select>
+                              <button
+                                onClick={() => setVideoIsMuted(!videoIsMuted)}
+                                className={`p-1 border transition cursor-pointer flex items-center ${
+                                  videoIsMuted 
+                                    ? 'border-rose-500/30 text-rose-400 bg-rose-500/5' 
+                                    : 'border-white/10 text-amber-400'
+                                }`}
+                              >
+                                {videoIsMuted ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
 
                   {/* Markdown Renderer */}
                   <div className="prose prose-invert max-w-none text-xs leading-relaxed uppercase tracking-tight text-[#F8F7F4]/80 normal-case">
@@ -1225,6 +1614,512 @@ Understanding physical states requires modeling probability distributions using 
             </div>
           )}
 
+          {/* AI VIDEO EXPLAINER TAB */}
+          {activeTab === 'video' && (
+            <div className="max-w-5xl mx-auto space-y-8 font-mono text-xs uppercase">
+              <div className="border-b border-white/10 pb-5">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-sm font-bold text-[#F8F7F4] tracking-wider">AI Interactive Explainer Video</h2>
+                    <p className="text-[10px] text-[#F8F7F4]/40 mt-1">Convert your PDF syllabus coursework into an immersive presentation explained by an AI lecturer in your preferred language.</p>
+                  </div>
+                  
+                  {activeVideo && (
+                    <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 text-[10px] text-emerald-400 font-bold">
+                      <Languages className="w-3.5 h-3.5 animate-pulse" />
+                      <span>EXPLAINER ACTIVE: {activeVideo.language}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {!activeVideo && !videoLoading && (
+                <div className="bg-[#18181b] border border-white/10 p-8 text-center max-w-2xl mx-auto space-y-6">
+                  <div className="w-16 h-16 bg-amber-400/10 border border-amber-400/30 rounded-full flex items-center justify-center mx-auto shadow-inner">
+                    <Video className="w-8 h-8 text-amber-400" />
+                  </div>
+
+                  <div className="space-y-2">
+                    <h3 className="font-bold text-xs text-[#F8F7F4]">Compile AI Lecture Presentation</h3>
+                    <p className="text-[10px] text-[#F8F7F4]/50 leading-relaxed normal-case max-w-md mx-auto">
+                      Our video generation engine parses your course chapters and synthesizes a slide deck presentation complete with bullet points, conceptual diagrams, virtual presenter expressions, and voice speech in your language.
+                    </p>
+                  </div>
+
+                  {/* Language Picker */}
+                  <div className="max-w-xs mx-auto p-4 bg-[#111113] border border-white/5 space-y-3">
+                    <label className="block text-[9px] font-bold text-amber-400 tracking-wider">CHOOSE PREFERRED LECTURE LANGUAGE</label>
+                    <select
+                      value={videoLanguage}
+                      onChange={(e) => setVideoLanguage(e.target.value)}
+                      className="w-full bg-[#18181b] border border-white/10 text-white p-2 text-xs focus:border-amber-400 focus:outline-none"
+                    >
+                      {['English', 'Spanish', 'French', 'German', 'Hindi', 'Japanese', 'Chinese', 'Telugu', 'Tamil', 'Arabic', 'Russian', 'Portuguese'].map((lang) => (
+                        <option key={lang} value={lang}>{lang}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <button
+                    onClick={handleGenerateVideo}
+                    className="px-8 py-3 bg-[#FFD700] text-amber-950 font-bold text-xs hover:bg-amber-400 transition tracking-widest cursor-pointer shadow-lg hover:scale-[1.02] active:scale-95 duration-150 uppercase"
+                  >
+                    Generate Multi-lingual Lecture
+                  </button>
+                </div>
+              )}
+
+              {videoLoading && (
+                <div className="bg-[#18181b] border border-white/10 p-12 text-center max-w-2xl mx-auto space-y-6 font-mono text-xs">
+                  <div className="relative w-20 h-20 mx-auto flex items-center justify-center">
+                    {/* Concentric radar loading visualizer rings */}
+                    <div className="absolute inset-0 border border-amber-400/20 rounded-full animate-ping" />
+                    <div className="absolute inset-2 border border-amber-400/40 rounded-full animate-pulse" />
+                    <RefreshCw className="w-8 h-8 text-amber-400 animate-spin" />
+                  </div>
+
+                  <div className="space-y-2">
+                    <h3 className="font-bold text-[#F8F7F4] uppercase animate-pulse">Synthesizing Lecture Script...</h3>
+                    <p className="text-[10px] text-amber-400 uppercase tracking-widest font-bold">Llm model compiling slides in {videoLanguage}</p>
+                    
+                    {/* Live rolling text simulation */}
+                    <div className="p-3 bg-[#111113] border border-white/5 text-[9px] text-[#F8F7F4]/50 max-w-sm mx-auto normal-case leading-relaxed">
+                      ⏳ Organizing syllabus nodes &rarr; Drafting voice script &rarr; Formatting visual templates &rarr; Baking speech triggers.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {videoError && (
+                <div className="bg-rose-500/10 border border-rose-500/20 p-6 text-center max-w-md mx-auto space-y-4">
+                  <AlertTriangle className="w-10 h-10 text-rose-400 mx-auto animate-pulse" />
+                  <p className="text-xs font-bold text-rose-200">Video Generation Interrupted</p>
+                  <p className="text-[10px] text-[#F8F7F4]/60 normal-case">{videoError}</p>
+                  <button
+                    onClick={handleGenerateVideo}
+                    className="px-4 py-2 border border-rose-500 text-rose-400 hover:bg-rose-500/10 font-bold cursor-pointer"
+                  >
+                    Retry Generator Pipeline
+                  </button>
+                </div>
+              )}
+
+              {activeVideo && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  
+                  {/* Left: Main Immersive Video Screen & Controls */}
+                  <div className="lg:col-span-2 space-y-4">
+                    
+                    {/* Video Canvas Container */}
+                    <div className="aspect-video bg-[#0c0c0e] border border-white/10 relative group overflow-hidden shadow-2xl flex flex-col justify-between">
+                      
+                      {/* Top bar header */}
+                      <div className="p-3 bg-[#111113]/90 border-b border-white/5 flex items-center justify-between text-[9px] text-[#F8F7F4]/60 z-10 backdrop-blur-sm">
+                        <span className="font-bold text-amber-400 flex items-center gap-1.5 uppercase">
+                          <span className="w-2 h-2 bg-rose-500 rounded-full animate-pulse" />
+                          AI LECTURE TRANSCRIPTION PLAYER
+                        </span>
+                        <span className="font-mono bg-white/5 px-2 py-0.5 border border-white/5 uppercase">
+                          Language: {activeVideo.language}
+                        </span>
+                      </div>
+
+                      {/* Video Stage Visual Layout */}
+                      <div className="flex-1 flex overflow-hidden">
+                        
+                        {/* Virtual Presenter Speaker column */}
+                        <div className="w-1/3 border-r border-white/5 bg-[#121214]/90 flex flex-col justify-center items-center p-4 relative overflow-hidden">
+                          {/* Radial Aura glow effect */}
+                          <div className="absolute w-36 h-36 rounded-full bg-amber-400/5 blur-2xl top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2" />
+                          
+                          {/* Pulsing Concentric Visualizer Rings */}
+                          <div className="relative w-20 h-20 flex items-center justify-center z-10">
+                            {videoPlaying && (
+                              <>
+                                <div className="absolute inset-0 border border-amber-400/20 rounded-full animate-ping" style={{ animationDuration: '2.5s' }} />
+                                <div className="absolute inset-[-12px] border border-amber-400/10 rounded-full animate-ping" style={{ animationDuration: '3.5s' }} />
+                                <div className="absolute inset-[6px] border border-amber-300/30 rounded-full animate-pulse" />
+                              </>
+                            )}
+
+                            {/* Main Animated Avatar Head */}
+                            <div className="w-16 h-16 bg-[#18181b] border-2 border-amber-400 flex items-center justify-center rounded-full shadow-lg relative overflow-hidden">
+                              <svg className="w-12 h-12" viewBox="0 0 48 48">
+                                {/* Base Neck & Shoulders */}
+                                <path d="M12,42 C12,34 18,32 24,32 C30,32 36,34 36,42" fill="none" stroke="#FFD700" strokeWidth="1.5" />
+                                {/* Face Oval */}
+                                <circle cx="24" cy="20" r="10" className="fill-[#111113] stroke-amber-400 stroke-[1.5]" />
+                                
+                                {/* Expression Eyes & Mouth */}
+                                {activeVideo.slides[currentSlideIdx]?.avatarExpression === 'smiling' && (
+                                  <>
+                                    <circle cx="20" cy="18" r="1.5" fill="#FFD700" />
+                                    <circle cx="28" cy="18" r="1.5" fill="#FFD700" />
+                                    <path d="M21,23 Q24,26 27,23" fill="none" stroke="#FFD700" strokeWidth="1.5" strokeLinecap="round" />
+                                  </>
+                                )}
+
+                                {activeVideo.slides[currentSlideIdx]?.avatarExpression === 'explaining' && (
+                                  <>
+                                    <line x1="18" y1="18" x2="22" y2="17" stroke="#FFD700" strokeWidth="1.5" />
+                                    <line x1="26" y1="17" x2="30" y2="18" stroke="#FFD700" strokeWidth="1.5" />
+                                    <circle cx="20" cy="19" r="1.5" fill="#FFD700" />
+                                    <circle cx="28" cy="19" r="1.5" fill="#FFD700" />
+                                    <circle cx="24" cy="24" r="2.5" fill="#FFD700" className={videoPlaying ? "animate-pulse" : ""} />
+                                  </>
+                                )}
+
+                                {activeVideo.slides[currentSlideIdx]?.avatarExpression === 'thoughtful' && (
+                                  <>
+                                    <path d="M18,17 Q20,16 22,18" fill="none" stroke="#FFD700" strokeWidth="1.5" />
+                                    <path d="M26,18 Q28,16 30,17" fill="none" stroke="#FFD700" strokeWidth="1.5" />
+                                    <circle cx="20" cy="19" r="1.2" fill="#FFD700" />
+                                    <circle cx="28" cy="19" r="1.2" fill="#FFD700" />
+                                    <line x1="21" y1="23" x2="27" y2="23" stroke="#FFD700" strokeWidth="1.5" />
+                                  </>
+                                )}
+
+                                {activeVideo.slides[currentSlideIdx]?.avatarExpression === 'pointing' && (
+                                  <>
+                                    <circle cx="19" cy="18" r="1.5" fill="#FFD700" />
+                                    <circle cx="29" cy="18" r="1.5" fill="#FFD700" />
+                                    <path d="M21,23 Q24,25 27,23" fill="none" stroke="#FFD700" strokeWidth="1.5" />
+                                    {/* Arm hand visual line pointing right */}
+                                    <line x1="30" y1="25" x2="42" y2="20" stroke="#FFD700" strokeWidth="1.5" strokeLinecap="round" className="animate-pulse" />
+                                  </>
+                                )}
+
+                                {(!activeVideo.slides[currentSlideIdx]?.avatarExpression || activeVideo.slides[currentSlideIdx]?.avatarExpression === 'neutral') && (
+                                  <>
+                                    <circle cx="20" cy="18" r="1.5" fill="#FFD700" />
+                                    <circle cx="28" cy="18" r="1.5" fill="#FFD700" />
+                                    <line x1="21" y1="24" x2="27" y2="24" stroke="#FFD700" strokeWidth="1.5" />
+                                  </>
+                                )}
+                              </svg>
+                            </div>
+                          </div>
+
+                          <div className="text-center mt-3 z-10">
+                            <span className="text-[7.5px] font-bold text-amber-400 bg-amber-400/10 px-2 py-0.5 border border-amber-400/20 uppercase tracking-widest block font-mono">
+                              PRESENTER STATUS
+                            </span>
+                            <span className="text-[9px] text-[#F8F7F4]/60 uppercase tracking-wide font-bold mt-1 block">
+                              {videoPlaying ? `🗣️ ${activeVideo.slides[currentSlideIdx]?.avatarExpression || 'Speaking'}` : '⏸️ Paused'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Visual Projection Slide Board Column */}
+                        <div className="w-2/3 bg-[#0f0f11] p-5 flex flex-col justify-between overflow-hidden relative select-none">
+                          {/* Digital Grid overlay */}
+                          <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.015)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.015)_1px,transparent_1px)] bg-[size:16px_16px]" />
+                          
+                          {/* Slide Content */}
+                          <div className="space-y-3.5 z-10 relative">
+                            <div className="flex justify-between items-center text-[8px] font-bold text-amber-400 tracking-wider font-mono">
+                              <span>SLIDE DECK EXPLOITS</span>
+                              <span>PAGE {currentSlideIdx + 1} / {activeVideo.slides.length}</span>
+                            </div>
+
+                            <div className="space-y-1">
+                              <h3 className="text-[13px] font-bold text-[#F8F7F4] uppercase leading-tight font-display tracking-tight border-b border-white/5 pb-1">
+                                {activeVideo.slides[currentSlideIdx]?.slideTitle}
+                              </h3>
+                            </div>
+
+                            {/* Slide Bullet points */}
+                            <div className="space-y-2 mt-3 pl-1">
+                              {activeVideo.slides[currentSlideIdx]?.slidePoints?.map((pt: string, ptIdx: number) => (
+                                <div key={ptIdx} className="flex gap-2 items-start text-[9px] uppercase leading-relaxed text-[#F8F7F4]/80">
+                                  <span className="text-amber-400 font-bold shrink-0">&bull;</span>
+                                  <span>{pt}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Dynamic Concept Node Remap Graph simulation */}
+                          <div className="h-16 bg-[#141416]/90 border border-white/5 flex items-center justify-between p-2 z-10 relative mt-2 rounded-sm overflow-hidden font-mono">
+                            <div className="absolute inset-0 bg-gradient-to-r from-amber-400/0 via-amber-400/2 to-amber-400/0 animate-pulse" />
+                            <div className="space-y-1 max-w-[55%]">
+                              <span className="text-[7px] text-amber-400 font-bold block uppercase tracking-wider">Concept Render Pipeline</span>
+                              <span className="text-[8px] text-[#F8F7F4]/50 leading-tight block uppercase truncate normal-case" title={activeVideo.slides[currentSlideIdx]?.visualPrompt}>
+                                {activeVideo.slides[currentSlideIdx]?.visualPrompt}
+                              </span>
+                            </div>
+                            
+                            {/* Graphic Diagram Mock */}
+                            <div className="w-1/3 h-full flex items-center justify-end">
+                              <svg className="w-full h-full text-amber-400/40" viewBox="0 0 100 40">
+                                <circle cx="20" cy="20" r="4" fill="currentColor" />
+                                <circle cx="50" cy="10" r="4" fill="currentColor" />
+                                <circle cx="50" cy="30" r="4" fill="currentColor" />
+                                <circle cx="80" cy="20" r="4" fill="currentColor" />
+                                <line x1="24" y1="20" x2="46" y2="10" stroke="currentColor" strokeWidth="1" />
+                                <line x1="24" y1="20" x2="46" y2="30" stroke="currentColor" strokeWidth="1" />
+                                <line x1="54" y1="10" x2="76" y2="20" stroke="currentColor" strokeWidth="1" />
+                                <line x1="54" y1="30" x2="76" y2="20" stroke="currentColor" strokeWidth="1" />
+                              </svg>
+                            </div>
+                          </div>
+
+                        </div>
+                      </div>
+
+                      {/* Real-time Subtitles Caption bar Overlay */}
+                      <div className="p-3.5 bg-black/90 border-t border-white/5 text-center text-[10px] leading-relaxed text-amber-300 min-h-[4.5rem] flex items-center justify-center z-10 font-mono normal-case uppercase relative">
+                        <div className="absolute top-1 left-2 text-[7px] text-[#F8F7F4]/30 uppercase tracking-widest">
+                          [ LIVE TRANSLATION CAPTIONS ]
+                        </div>
+                        <p className="max-w-xl mx-auto uppercase text-center tracking-tight text-amber-200">
+                          {activeVideo.slides[currentSlideIdx]?.spokenText}
+                        </p>
+                      </div>
+
+                    </div>
+
+                    {/* Interactive Playback Control Bar */}
+                    <div className="bg-[#18181b] p-3 border border-white/10 flex flex-wrap items-center justify-between gap-4 font-mono">
+                      
+                      {/* Left: Prev/Play/Next buttons */}
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            if (currentSlideIdx > 0) {
+                              setCurrentSlideIdx(prev => prev - 1);
+                            }
+                          }}
+                          disabled={currentSlideIdx === 0}
+                          className="p-2 border border-white/10 hover:border-amber-400/50 hover:bg-white/5 disabled:opacity-30 cursor-pointer text-[#F8F7F4]"
+                          title="Previous slide"
+                        >
+                          <SkipForward className="w-4 h-4 rotate-180" />
+                        </button>
+
+                        <button
+                          onClick={() => setVideoPlaying(!videoPlaying)}
+                          className={`p-2 px-4 flex items-center gap-1.5 border text-xs font-bold uppercase transition cursor-pointer ${
+                            videoPlaying 
+                              ? 'bg-amber-400/10 border-amber-400 text-amber-400' 
+                              : 'bg-white/5 border-white/10 hover:border-amber-400 text-[#F8F7F4]'
+                          }`}
+                        >
+                          {videoPlaying ? (
+                            <>
+                              <Pause className="w-4 h-4 fill-amber-400" />
+                              <span>Pause</span>
+                            </>
+                          ) : (
+                            <>
+                              <Play className="w-4 h-4 fill-white" />
+                              <span>Play</span>
+                            </>
+                          )}
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            if (currentSlideIdx < activeVideo.slides.length - 1) {
+                              setCurrentSlideIdx(prev => prev + 1);
+                            }
+                          }}
+                          disabled={currentSlideIdx === activeVideo.slides.length - 1}
+                          className="p-2 border border-white/10 hover:border-amber-400/50 hover:bg-white/5 disabled:opacity-30 cursor-pointer text-[#F8F7F4]"
+                          title="Next slide"
+                        >
+                          <SkipForward className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {/* Middle: Progress timeline indicator */}
+                      <div className="flex-1 min-w-[12rem] flex items-center gap-3">
+                        <span className="text-[9px] text-[#F8F7F4]/50">SLIDE PROGRESS</span>
+                        <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden flex relative border border-white/5 cursor-pointer">
+                          {activeVideo.slides.map((_: any, idx: number) => {
+                            const isPast = idx <= currentSlideIdx;
+                            const isActive = idx === currentSlideIdx;
+                            return (
+                              <div
+                                key={idx}
+                                onClick={() => {
+                                  setCurrentSlideIdx(idx);
+                                }}
+                                className={`h-full border-r border-black/30 flex-1 transition-all duration-300 ${
+                                  isActive 
+                                    ? 'bg-amber-400 shadow-inner' 
+                                    : isPast 
+                                    ? 'bg-amber-500/60' 
+                                    : 'bg-transparent'
+                                }`}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Right: Pitch Rate & Mute toggles */}
+                      <div className="flex items-center gap-3 text-[9px]">
+                        {/* Voice Speed Selector */}
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[#F8F7F4]/40">SPEED</span>
+                          <select
+                            value={videoVoiceSpeed}
+                            onChange={(e) => setVideoVoiceSpeed(parseFloat(e.target.value))}
+                            className="bg-[#111113] border border-white/10 text-[#F8F7F4]/80 p-1 text-[9px] tracking-wide"
+                          >
+                            <option value="0.75">0.75x</option>
+                            <option value="1.0">1.0x</option>
+                            <option value="1.25">1.25x</option>
+                            <option value="1.5">1.5x</option>
+                          </select>
+                        </div>
+
+                        {/* Mute toggle button */}
+                        <button
+                          onClick={() => setVideoIsMuted(!videoIsMuted)}
+                          className={`p-1.5 border transition cursor-pointer flex items-center gap-1 ${
+                            videoIsMuted 
+                              ? 'border-rose-500/40 text-rose-400 bg-rose-500/5' 
+                              : 'border-white/10 text-amber-400 hover:border-amber-400/40'
+                          }`}
+                          title={videoIsMuted ? "Audio speech is muted (using timed subtitle ticker)" : "Speech voice active"}
+                        >
+                          {videoIsMuted ? (
+                            <>
+                              <VolumeX className="w-3.5 h-3.5" />
+                              <span>Muted</span>
+                            </>
+                          ) : (
+                            <>
+                              <Volume2 className="w-3.5 h-3.5" />
+                              <span>Voice On</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                    </div>
+
+                  </div>
+
+                  {/* Right Column: Lecture Transcription Logs & Setup options */}
+                  <div className="space-y-6">
+                    
+                    {/* Translate to other language option box */}
+                    <div className="bg-[#18181b] p-4 border border-white/10 space-y-3.5">
+                      <div className="flex items-center gap-2 border-b border-white/5 pb-2">
+                        <Languages className="w-4 h-4 text-amber-400" />
+                        <h3 className="font-bold text-[10px] text-[#F8F7F4]">Change Translation</h3>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[8px] text-gray-400 font-bold block uppercase">Select other language</label>
+                        <div className="flex gap-1.5">
+                          <select
+                            value={videoLanguage}
+                            onChange={(e) => setVideoLanguage(e.target.value)}
+                            className="flex-1 bg-[#111113] border border-white/10 text-[#F8F7F4] p-2 text-[10px] focus:outline-none"
+                          >
+                            {['English', 'Spanish', 'French', 'German', 'Hindi', 'Japanese', 'Chinese', 'Telugu', 'Tamil', 'Arabic', 'Russian', 'Portuguese'].map((lang) => (
+                              <option key={lang} value={lang}>{lang}</option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={handleGenerateVideo}
+                            className="px-3 bg-[#FFD700] hover:bg-amber-400 text-[#111113] font-bold text-[9px] uppercase cursor-pointer flex items-center gap-1"
+                            title="Generate Explainer Video in selected language"
+                          >
+                            <span>Translate</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Cache status info */}
+                      <span className="text-[8px] text-[#F8F7F4]/30 block normal-case font-mono italic">
+                        * Videos you generate are saved to the persistent database. Translation usually takes under 15 seconds.
+                      </span>
+                    </div>
+
+                    {/* Playable Slides Index Transcription Logger */}
+                    <div className="bg-[#18181b] border border-white/10 p-4 space-y-3.5">
+                      <div className="border-b border-white/5 pb-2">
+                        <h3 className="font-bold text-[10px] text-[#F8F7F4] uppercase">Lecture Script Transcription</h3>
+                        <p className="text-[8.5px] text-amber-400 uppercase font-bold mt-0.5">Click a slide to fast-travel player</p>
+                      </div>
+
+                      <div className="space-y-2.5 max-h-[16.5rem] overflow-y-auto pr-1">
+                        {activeVideo.slides.map((slide: any, idx: number) => {
+                          const isActive = idx === currentSlideIdx;
+                          return (
+                            <div
+                              key={idx}
+                              onClick={() => {
+                                setCurrentSlideIdx(idx);
+                                setVideoPlaying(true);
+                              }}
+                              className={`p-2.5 border transition cursor-pointer flex flex-col gap-1 ${
+                                isActive 
+                                  ? 'bg-[#111113] border-amber-400' 
+                                  : 'border-white/5 hover:border-white/20 hover:bg-white/5'
+                              }`}
+                            >
+                              <div className="flex justify-between items-center text-[8px] font-bold font-mono">
+                                <span className={isActive ? 'text-amber-400' : 'text-[#F8F7F4]/50'}>SLIDE 0{idx + 1}</span>
+                                <span className="text-[7.5px] text-[#F8F7F4]/30 bg-white/5 px-1 uppercase">{slide.avatarExpression}</span>
+                              </div>
+                              <span className="text-[9.5px] font-bold text-[#F8F7F4] uppercase truncate">{slide.slideTitle}</span>
+                              <p className="text-[8px] text-[#F8F7F4]/40 line-clamp-2 leading-relaxed normal-case uppercase truncate">
+                                {slide.spokenText}
+                              </p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Previously Saved Lecture Versions list */}
+                    {previousVideos.length > 1 && (
+                      <div className="bg-[#18181b] border border-white/10 p-4 space-y-3">
+                        <div className="border-b border-white/5 pb-2">
+                          <h3 className="font-bold text-[10px] text-[#F8F7F4] uppercase">Saved Lecture Releases</h3>
+                        </div>
+
+                        <div className="space-y-1.5 text-[10px]">
+                          {previousVideos.map((vid: any) => {
+                            const isCurrent = vid.id === activeVideo.id;
+                            return (
+                              <button
+                                key={vid.id}
+                                onClick={() => {
+                                  setActiveVideo(vid);
+                                  setVideoLanguage(vid.language);
+                                  setCurrentSlideIdx(0);
+                                  setVideoPlaying(true);
+                                }}
+                                className={`w-full text-left p-2 border transition cursor-pointer flex items-center justify-between ${
+                                  isCurrent 
+                                    ? 'bg-[#111113] border-amber-400 text-amber-400 font-bold' 
+                                    : 'border-white/5 text-gray-400 hover:text-white hover:bg-white/5'
+                                }`}
+                              >
+                                <span className="uppercase tracking-tight truncate max-w-[75%]">{vid.videoTitle} ({vid.language})</span>
+                                <span className="text-[8px] opacity-40">{vid.estimatedDuration}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                  </div>
+
+                </div>
+              )}
+
+            </div>
+          )}
+
         </div>
       </div>
 
@@ -1378,16 +2273,34 @@ Understanding physical states requires modeling probability distributions using 
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSendChat()}
-                placeholder={isListening ? "Listening dictation..." : "Dictate or write question..."}
-                className="w-full bg-[#111113] border border-white/10 text-[10px] text-[#F8F7F4] py-2.5 pl-3 pr-10 focus:border-amber-400 focus:outline-none"
+                placeholder={isListening ? "Listening... Speak now..." : "Dictate or write question..."}
+                className="w-full bg-[#111113] border border-white/10 text-[10px] text-[#F8F7F4] py-2.5 pl-3 pr-20 focus:border-amber-400 focus:outline-none"
               />
-              <button
-                onClick={handleSendChat}
-                disabled={!chatInput.trim()}
-                className="absolute right-2 top-2 p-1 bg-[#FFD700] hover:bg-amber-400 text-[#111113] disabled:opacity-30 cursor-pointer"
-              >
-                <Send className="w-3 h-3" />
-              </button>
+              <div className="absolute right-2 top-1.5 flex items-center gap-1.5">
+                {/* Voice Input Microphone Button */}
+                <button
+                  type="button"
+                  onClick={toggleListening}
+                  title={isListening ? "Stop listening" : "Ask with voice"}
+                  className={`p-1.5 border transition cursor-pointer flex items-center justify-center ${
+                    isListening 
+                      ? 'bg-red-500/20 border-red-500 text-red-400 animate-pulse scale-105' 
+                      : 'border-white/10 text-gray-400 hover:text-amber-400 hover:border-amber-400'
+                  }`}
+                >
+                  <Mic className="w-3.5 h-3.5" />
+                </button>
+                {/* Submit button */}
+                <button
+                  type="button"
+                  onClick={handleSendChat}
+                  disabled={!chatInput.trim()}
+                  className="p-1.5 bg-[#FFD700] hover:bg-amber-400 text-[#111113] disabled:opacity-30 disabled:hover:bg-[#FFD700] cursor-pointer border border-[#FFD700] transition flex items-center justify-center"
+                  title="Send message"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
           </div>
 

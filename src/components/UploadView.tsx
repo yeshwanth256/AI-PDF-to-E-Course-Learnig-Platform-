@@ -159,9 +159,13 @@ export function UploadView({ onCourseGenerated, onNavigateBack }: UploadViewProp
       }
 
       // Add RAG parameters in the body to simulate the Enterprise RAG configuration
+      const token = localStorage.getItem('auth_token');
       const response = await fetch('/api/courses/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({
           pdfBase64: base64Payload,
           pdfName: sourceName,

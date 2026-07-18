@@ -15,8 +15,63 @@ const app = express();
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+import crypto from 'crypto';
+
 // Setup Database Path
 const DB_PATH = path.join(process.cwd(), 'db.json');
+
+// JWT/Token Secret for secure authentication
+const JWT_SECRET = process.env.JWT_SECRET || 'aistudio-super-secret-key-1337-abc';
+
+// Helper: Hash password
+function hashPassword(password: string): string {
+  return crypto.createHash('sha256').update(password).digest('hex');
+}
+
+// Helper: Generate Token
+function generateToken(userId: string): string {
+  const hash = crypto.createHmac('sha256', JWT_SECRET).update(userId).digest('hex');
+  return `${userId}.${hash}`;
+}
+
+// Helper: Verify Token
+function verifyToken(token: string): string | null {
+  if (!token) return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [userId, hash] = parts;
+  const expectedHash = crypto.createHmac('sha256', JWT_SECRET).update(userId).digest('hex');
+  if (hash === expectedHash) {
+    return userId;
+  }
+  return null;
+}
+
+// Authentication Middleware
+function authenticate(req: any, res: any, next: any) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
+  }
+  
+  const token = authHeader.split(' ')[1];
+  const userId = verifyToken(token);
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized: Session expired or invalid' });
+  }
+
+  // Check if user still exists
+  const db = getDB();
+  const user = db.users?.find((u: any) => u.id === userId);
+  if (!user) {
+    return res.status(401).json({ error: 'Unauthorized: User not found' });
+  }
+
+  req.userId = userId;
+  req.user = user;
+  next();
+}
+
 
 // Initialize Gemini Client
 const ai = new GoogleGenAI({
@@ -286,7 +341,11 @@ The final answer is 12.
     };
     fs.writeFileSync(DB_PATH, JSON.stringify(initialDB, null, 2));
   }
-  return JSON.parse(fs.readFileSync(DB_PATH, 'utf-8'));
+  const db = JSON.parse(fs.readFileSync(DB_PATH, 'utf-8'));
+  if (!db.users) db.users = [];
+  if (!db.certificates) db.certificates = [];
+  if (!db.courses) db.courses = [];
+  return db;
 }
 
 function saveDB(db: any) {
@@ -296,22 +355,471 @@ function saveDB(db: any) {
 // Ensure database is initialized
 getDB();
 
-// API: Get user stats
-app.get('/api/stats', (req, res) => {
+// API: Auth - Register
+app.post('/api/auth/register', (req, res) => {
   try {
+    const { email, password, name } = req.body;
+    if (!email || !password || !name) {
+      return res.status(400).json({ error: 'Missing required registration details' });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
     const db = getDB();
-    res.json(db.stats);
+
+    const existingUser = db.users.find((u: any) => u.email === cleanEmail);
+    if (existingUser) {
+      return res.status(400).json({ error: 'A user with this email already exists' });
+    }
+
+    const userId = `usr-${Date.now()}`;
+    const newUser = {
+      id: userId,
+      email: cleanEmail,
+      name: name.trim(),
+      passwordHash: hashPassword(password),
+      provider: 'email',
+      stats: {
+        learningHours: 0,
+        learningStreak: 1,
+        xpPoints: 10,
+        completedLessons: [],
+        completedCourses: [],
+        quizScores: {},
+        badges: ['Fresh Mind'],
+        recentActivity: [
+          {
+            id: `act-${Date.now()}`,
+            type: 'course_start',
+            title: 'Registered as E-Course Scholar',
+            timestamp: new Date().toISOString(),
+            xp: 10
+          }
+        ]
+      }
+    };
+
+    db.users.push(newUser);
+    saveDB(db);
+
+    const token = generateToken(userId);
+    const { passwordHash: _, ...userWithoutPassword } = newUser;
+    res.status(201).json({ token, user: userWithoutPassword });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// API: Get all courses
-app.get('/api/courses', (req, res) => {
+// API: Auth - Login
+app.post('/api/auth/login', (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Missing email or password' });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const db = getDB();
+
+    const user = db.users.find((u: any) => u.email === cleanEmail);
+    if (!user || user.provider !== 'email') {
+      return res.status(400).json({ error: 'Invalid email or password combination' });
+    }
+
+    const passHash = hashPassword(password);
+    if (user.passwordHash !== passHash) {
+      return res.status(400).json({ error: 'Invalid email or password combination' });
+    }
+
+    // Check / Increment Streak
+    const lastActivity = user.stats.recentActivity[0];
+    if (lastActivity) {
+      const lastDate = new Date(lastActivity.timestamp).toDateString();
+      const today = new Date().toDateString();
+      if (lastDate !== today) {
+        user.stats.learningStreak = (user.stats.learningStreak || 0) + 1;
+        user.stats.recentActivity.unshift({
+          id: `act-${Date.now()}`,
+          type: 'course_start',
+          title: 'Daily learning streak continued!',
+          timestamp: new Date().toISOString(),
+          xp: 15
+        });
+        user.stats.xpPoints += 15;
+        saveDB(db);
+      }
+    }
+
+    const token = generateToken(user.id);
+    const { passwordHash: _, ...userWithoutPassword } = user;
+    res.json({ token, user: userWithoutPassword });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Auth - OAuth (Google / GitHub simulation buttons)
+app.post('/api/auth/oauth', (req, res) => {
+  try {
+    const { provider, email, name } = req.body;
+    if (!provider || !email || !name) {
+      return res.status(400).json({ error: 'Missing OAuth parameters' });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const db = getDB();
+
+    let user = db.users.find((u: any) => u.email === cleanEmail);
+
+    if (!user) {
+      const userId = `usr-oauth-${Date.now()}`;
+      user = {
+        id: userId,
+        email: cleanEmail,
+        name: name.trim(),
+        provider: provider,
+        passwordHash: '',
+        stats: {
+          learningHours: 0,
+          learningStreak: 1,
+          xpPoints: 20,
+          completedLessons: [],
+          completedCourses: [],
+          quizScores: {},
+          badges: ['Digital Scholar'],
+          recentActivity: [
+            {
+              id: `act-${Date.now()}`,
+              type: 'course_start',
+              title: `Signed up securely via ${provider === 'google' ? 'Google' : 'GitHub'}`,
+              timestamp: new Date().toISOString(),
+              xp: 20
+            }
+          ]
+        }
+      };
+
+      db.users.push(user);
+      saveDB(db);
+    } else {
+      const lastActivity = user.stats.recentActivity[0];
+      if (lastActivity) {
+        const lastDate = new Date(lastActivity.timestamp).toDateString();
+        const today = new Date().toDateString();
+        if (lastDate !== today) {
+          user.stats.learningStreak = (user.stats.learningStreak || 0) + 1;
+          user.stats.recentActivity.unshift({
+            id: `act-${Date.now()}`,
+            type: 'course_start',
+            title: `Logged in securely via ${provider === 'google' ? 'Google' : 'GitHub'}`,
+            timestamp: new Date().toISOString(),
+            xp: 15
+          });
+          user.stats.xpPoints += 15;
+          saveDB(db);
+        }
+      }
+    }
+
+    const token = generateToken(user.id);
+    const { passwordHash: _, ...userWithoutPassword } = user;
+    res.json({ token, user: userWithoutPassword });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Auth - Me
+app.get('/api/auth/me', authenticate, (req: any, res) => {
+  const { passwordHash: _, ...userWithoutPassword } = req.user;
+  res.json({ user: userWithoutPassword });
+});
+
+// API: Auth - Logout
+app.post('/api/auth/logout', (req, res) => {
+  res.json({ success: true });
+});
+
+
+// API: Get user stats
+app.get('/api/stats', authenticate, (req: any, res) => {
   try {
     const db = getDB();
+    const userIndex = db.users.findIndex((u: any) => u.id === req.userId);
+    if (userIndex !== -1) {
+      const stats = db.users[userIndex].stats;
+      let mutated = false;
+      if (stats.dailyStudyTarget === undefined) {
+        stats.dailyStudyTarget = 30;
+        mutated = true;
+      }
+      if (stats.dailyStudyProgress === undefined) {
+        stats.dailyStudyProgress = 0;
+        mutated = true;
+      }
+      if (!stats.lastStudyDate) {
+        stats.lastStudyDate = new Date().toISOString().split('T')[0];
+        mutated = true;
+      }
+      if (!stats.completedDsa) {
+        stats.completedDsa = [];
+        mutated = true;
+      }
+      if (!stats.completedDaily) {
+        stats.completedDaily = [];
+        mutated = true;
+      }
+      if (!stats.completedWeekly) {
+        stats.completedWeekly = [];
+        mutated = true;
+      }
+      if (!stats.lastChallengeResetDate) {
+        stats.lastChallengeResetDate = new Date().toISOString().split('T')[0];
+        mutated = true;
+      }
+
+      const todayStr = new Date().toISOString().split('T')[0];
+      if (stats.lastStudyDate !== todayStr) {
+        stats.dailyStudyProgress = 0;
+        stats.lastStudyDate = todayStr;
+        mutated = true;
+      }
+      if (stats.lastChallengeResetDate !== todayStr) {
+        stats.completedDaily = [];
+        stats.lastChallengeResetDate = todayStr;
+        mutated = true;
+      }
+
+      if (mutated) {
+        saveDB(db);
+      }
+      res.json(stats);
+    } else {
+      res.json(req.user.stats);
+    }
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Update study time and goal settings
+app.post('/api/progress/study-time', authenticate, (req: any, res) => {
+  try {
+    const { dailyStudyTarget, additionalSeconds, manualMinutes } = req.body;
+    const db = getDB();
+    const userIndex = db.users.findIndex((u: any) => u.id === req.userId);
+    if (userIndex === -1) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const stats = db.users[userIndex].stats;
+    
+    // Ensure default study fields are initialized
+    if (stats.dailyStudyTarget === undefined) stats.dailyStudyTarget = 30;
+    if (stats.dailyStudyProgress === undefined) stats.dailyStudyProgress = 0;
+    if (!stats.lastStudyDate) stats.lastStudyDate = new Date().toISOString().split('T')[0];
+
+    // Daily reset check
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (stats.lastStudyDate !== todayStr) {
+      stats.dailyStudyProgress = 0;
+      stats.lastStudyDate = todayStr;
+    }
+
+    // 1. Update Target if specified
+    if (dailyStudyTarget !== undefined && typeof dailyStudyTarget === 'number') {
+      stats.dailyStudyTarget = dailyStudyTarget;
+    }
+
+    // 2. Update Progress
+    let secondsAdded = 0;
+    if (additionalSeconds !== undefined && typeof additionalSeconds === 'number') {
+      secondsAdded = additionalSeconds;
+    }
+    if (manualMinutes !== undefined && typeof manualMinutes === 'number') {
+      secondsAdded += manualMinutes * 60;
+    }
+
+    if (secondsAdded > 0) {
+      const prevProgress = stats.dailyStudyProgress;
+      stats.dailyStudyProgress += secondsAdded;
+      
+      // Update overall learning hours (round to 2 decimal places)
+      const hoursAdded = secondsAdded / 3600;
+      stats.learningHours = parseFloat((stats.learningHours + hoursAdded).toFixed(2));
+
+      // Check if daily study goal has just been completed/crossed
+      const targetSeconds = stats.dailyStudyTarget * 60;
+      if (prevProgress < targetSeconds && stats.dailyStudyProgress >= targetSeconds) {
+        // Just achieved target! Award 50 XP bonus & record activity
+        stats.xpPoints += 50;
+        stats.recentActivity.unshift({
+          id: `act-${Date.now()}-goal`,
+          type: 'daily_goal_complete',
+          title: `Achieved daily study target of ${stats.dailyStudyTarget} mins!`,
+          timestamp: new Date().toISOString(),
+          xp: 50
+        });
+      }
+    }
+
+    saveDB(db);
+    res.json(stats);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Submit a completed DSA Problem
+app.post('/api/stats/dsa', authenticate, (req: any, res) => {
+  try {
+    const { challengeId, title, xpReward } = req.body;
+    if (!challengeId || !title) {
+      return res.status(400).json({ error: 'Missing challengeId or title' });
+    }
+
+    const db = getDB();
+    const userIndex = db.users.findIndex((u: any) => u.id === req.userId);
+    if (userIndex === -1) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const stats = db.users[userIndex].stats;
+    if (!stats.completedDsa) stats.completedDsa = [];
+    
+    const isNew = !stats.completedDsa.includes(challengeId);
+    if (isNew) {
+      stats.completedDsa.push(challengeId);
+      
+      const xp = xpReward || 30;
+      stats.xpPoints += xp;
+      
+      if (!stats.recentActivity) stats.recentActivity = [];
+      stats.recentActivity.unshift({
+        id: `act-${Date.now()}-dsa`,
+        type: 'dsa_complete',
+        title: `Solved DSA Problem: ${title}!`,
+        timestamp: new Date().toISOString(),
+        xp: xp
+      });
+
+      // Check for custom badge
+      if (!stats.badges) stats.badges = [];
+      if (stats.completedDsa.length >= 3 && !stats.badges.includes('DSA Practitioner')) {
+        stats.badges.push('DSA Practitioner');
+      }
+      if (stats.completedDsa.length >= 5 && !stats.badges.includes('Algorithm Master')) {
+        stats.badges.push('Algorithm Master');
+      }
+    }
+
+    saveDB(db);
+    res.json(stats);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Claim Daily Challenge or Weekly Quest Reward
+app.post('/api/stats/challenge', authenticate, (req: any, res) => {
+  try {
+    const { type, id, title, xpReward } = req.body; // type: 'daily' | 'weekly'
+    if (!type || !id || !title) {
+      return res.status(400).json({ error: 'Missing type, id, or title' });
+    }
+
+    const db = getDB();
+    const userIndex = db.users.findIndex((u: any) => u.id === req.userId);
+    if (userIndex === -1) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const stats = db.users[userIndex].stats;
+    if (!stats.completedDaily) stats.completedDaily = [];
+    if (!stats.completedWeekly) stats.completedWeekly = [];
+
+    const list = type === 'daily' ? stats.completedDaily : stats.completedWeekly;
+    const isNew = !list.includes(id);
+
+    if (isNew) {
+      list.push(id);
+      
+      const xp = xpReward || 20;
+      stats.xpPoints += xp;
+      
+      if (!stats.recentActivity) stats.recentActivity = [];
+      stats.recentActivity.unshift({
+        id: `act-${Date.now()}-challenge`,
+        type: type === 'daily' ? 'challenge_complete' : 'quest_complete',
+        title: `${type === 'daily' ? 'Daily Challenge' : 'Weekly Quest'} Complete: ${title}`,
+        timestamp: new Date().toISOString(),
+        xp: xp
+      });
+
+      // Check badges for completing quests
+      const questBadge = 'Grand Quester';
+      if (!stats.badges) stats.badges = [];
+      if (type === 'weekly' && stats.completedWeekly.length >= 2 && !stats.badges.includes(questBadge)) {
+        stats.badges.push(questBadge);
+      }
+    }
+
+    saveDB(db);
+    res.json(stats);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Get AI DSA Code Review
+app.post('/api/dsa/review', authenticate, async (req: any, res) => {
+  try {
+    const { challengeId, challengeTitle, code, userPrompt } = req.body;
+    if (!challengeId || !code) {
+      return res.status(400).json({ error: 'Missing challengeId or code' });
+    }
+
+    const promptText = `
+You are an expert DSA (Data Structures & Algorithms) Technical Coach and Interviewer at top-tier companies like Google.
+Provide a highly professional, detailed, and constructive review of the student's solution to the DSA problem: "${challengeTitle}".
+
+The user's code:
+\`\`\`javascript
+${code}
+\`\`\`
+
+${userPrompt ? `The user also asked: "${userPrompt}"` : ''}
+
+Format your response in a visually gorgeous, clean, and structured Markdown layout utilizing:
+1. **Performance Metrics**: Direct estimations of Time Complexity and Space Complexity in Big-O notation.
+2. **Critique & edge-cases**: Analyze whether the solution is fully correct, sub-optimal, or has bugs. What happens with empty inputs, duplicates, or extreme sizes?
+3. **Actionable Suggestions**: 2-3 precise bullet points with recommended changes.
+4. **Optimized Solution**: A reference, fully commented, production-grade JavaScript/TypeScript implementation showing how a Senior Staff Engineer would write this. Use appropriate spacing and modern clean code conventions.
+5. **Interview Tip**: A short tactical interview advice related to this data structure or pattern.
+
+Be friendly, technical, clear, and encouraging. Use standard Markdown styling.
+`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: promptText,
+    });
+
+    const feedback = response.text || "Unable to generate review at this moment.";
+    res.json({ feedback });
+  } catch (error: any) {
+    console.error("Gemini DSA review error:", error);
+    res.status(500).json({ error: error.message || 'Failed to generate code review from Gemini.' });
+  }
+});
+
+// API: Get all courses
+app.get('/api/courses', authenticate, (req: any, res) => {
+  try {
+    const db = getDB();
+    const userId = req.userId;
     // Return course outlines (excluding base64 strings to save bandwidth)
-    const coursesSummary = db.courses.map((c: any) => {
+    // Only return courses that are public (no createdBy) OR created by current user
+    const userCourses = db.courses.filter((c: any) => !c.createdBy || c.createdBy === userId);
+    const coursesSummary = userCourses.map((c: any) => {
       const { pdfBase64, ...rest } = c;
       return rest;
     });
@@ -322,12 +830,15 @@ app.get('/api/courses', (req, res) => {
 });
 
 // API: Get single course
-app.get('/api/courses/:id', (req, res) => {
+app.get('/api/courses/:id', authenticate, (req: any, res) => {
   try {
     const db = getDB();
     const course = db.courses.find((c: any) => c.id === req.params.id);
     if (!course) {
       return res.status(404).json({ error: 'Course not found' });
+    }
+    if (course.createdBy && course.createdBy !== req.userId) {
+      return res.status(403).json({ error: 'Forbidden: You do not have access to this course' });
     }
     const { pdfBase64, ...rest } = course;
     res.json(rest);
@@ -337,7 +848,7 @@ app.get('/api/courses/:id', (req, res) => {
 });
 
 // API: Complete a lesson and earn XP
-app.post('/api/progress/lesson', (req, res) => {
+app.post('/api/progress/lesson', authenticate, (req: any, res) => {
   try {
     const { courseId, lessonId } = req.body;
     if (!courseId || !lessonId) {
@@ -345,7 +856,11 @@ app.post('/api/progress/lesson', (req, res) => {
     }
 
     const db = getDB();
-    const stats = db.stats;
+    const userIndex = db.users.findIndex((u: any) => u.id === req.userId);
+    if (userIndex === -1) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const stats = db.users[userIndex].stats;
 
     if (!stats.completedLessons.includes(lessonId)) {
       stats.completedLessons.push(lessonId);
@@ -393,7 +908,7 @@ app.post('/api/progress/lesson', (req, res) => {
 });
 
 // API: Submit quiz and get scores
-app.post('/api/progress/quiz', (req, res) => {
+app.post('/api/progress/quiz', authenticate, (req: any, res) => {
   try {
     const { courseId, quizId, score } = req.body; // score is percentage (0-100)
     if (!courseId || !quizId || score === undefined) {
@@ -401,7 +916,11 @@ app.post('/api/progress/quiz', (req, res) => {
     }
 
     const db = getDB();
-    const stats = db.stats;
+    const userIndex = db.users.findIndex((u: any) => u.id === req.userId);
+    if (userIndex === -1) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const stats = db.users[userIndex].stats;
 
     const previousBest = stats.quizScores[quizId] || 0;
     if (score > previousBest) {
@@ -427,8 +946,49 @@ app.post('/api/progress/quiz', (req, res) => {
   }
 });
 
+// API: Log completed game results and award XP/badges
+app.post('/api/progress/game', authenticate, (req: any, res) => {
+  try {
+    const { gameId, gameTitle, difficulty, score, xpEarned, badgeEarned } = req.body;
+    if (!gameId || !gameTitle || xpEarned === undefined) {
+      return res.status(400).json({ error: 'Missing game parameters' });
+    }
+
+    const db = getDB();
+    const userIndex = db.users.findIndex((u: any) => u.id === req.userId);
+    if (userIndex === -1) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const stats = db.users[userIndex].stats;
+
+    stats.xpPoints += xpEarned;
+    
+    // Add learning hours as a bonus (0.5 hours for playing a game)
+    stats.learningHours = parseFloat((stats.learningHours + 0.5).toFixed(1));
+
+    // Record activity
+    stats.recentActivity.unshift({
+      id: `act-${Date.now()}`,
+      type: 'game_complete',
+      title: `PLAYED ${gameTitle.toUpperCase()} (${difficulty.toUpperCase()}): SCORED ${score} PTS`,
+      timestamp: new Date().toISOString(),
+      xp: xpEarned
+    });
+
+    // Award badge if any
+    if (badgeEarned && !stats.badges.includes(badgeEarned)) {
+      stats.badges.push(badgeEarned);
+    }
+
+    saveDB(db);
+    res.json({ stats });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // API: Generate / Read Lesson Content on demand
-app.post('/api/lessons/generate', async (req, res) => {
+app.post('/api/lessons/generate', authenticate, async (req: any, res) => {
   try {
     const { courseId, chapterId, lessonId } = req.body;
     if (!courseId || !chapterId || !lessonId) {
@@ -527,7 +1087,7 @@ You must return the response as a JSON object matching this schema:
 });
 
 // API: Parse PDF and Generate Course structure (TOC)
-app.post('/api/courses/generate', async (req, res) => {
+app.post('/api/courses/generate', authenticate, async (req: any, res) => {
   try {
     const { pdfBase64, pdfName } = req.body;
     if (!pdfBase64) {
@@ -730,6 +1290,7 @@ Create logical mindMap nodes and edges representing the complete course architec
     // Enrich with id, dates, and pdf context
     const courseId = `course-${Date.now()}`;
     generatedCourse.id = courseId;
+    generatedCourse.createdBy = req.userId; // Securely link to current user!
     generatedCourse.pdfName = pdfName || 'uploaded-syllabus.pdf';
     generatedCourse.createdAt = new Date().toISOString();
     generatedCourse.pdfBase64 = pdfBase64; // Persist base64 PDF for RAG chat
@@ -738,14 +1299,18 @@ Create logical mindMap nodes and edges representing the complete course architec
     db.courses.push(generatedCourse);
 
     // Update user stats
-    db.stats.recentActivity.unshift({
-      id: `act-${Date.now()}`,
-      type: 'course_start',
-      title: `Generated course: ${generatedCourse.title}`,
-      timestamp: new Date().toISOString(),
-      xp: 50
-    });
-    db.stats.xpPoints += 50;
+    const userIndex = db.users.findIndex((u: any) => u.id === req.userId);
+    if (userIndex !== -1) {
+      const stats = db.users[userIndex].stats;
+      stats.recentActivity.unshift({
+        id: `act-${Date.now()}`,
+        type: 'course_start',
+        title: `Generated course: ${generatedCourse.title}`,
+        timestamp: new Date().toISOString(),
+        xp: 50
+      });
+      stats.xpPoints += 50;
+    }
 
     saveDB(db);
 
@@ -759,7 +1324,7 @@ Create logical mindMap nodes and edges representing the complete course architec
 });
 
 // API: Companion AI Chat Bot (RAG with Conversation History)
-app.post('/api/chat', async (req, res) => {
+app.post('/api/chat', authenticate, async (req: any, res) => {
   try {
     const { courseId, messages } = req.body; // messages: Array of chat history
     if (!courseId || !messages || !messages.length) {
@@ -844,15 +1409,19 @@ ${lastUserMessage}
 
     const result = JSON.parse(response.text || '{}');
     
-    // Add activity record
-    db.stats.recentActivity.unshift({
-      id: `act-${Date.now()}`,
-      type: 'chat_message',
-      title: `Asked AI Companion in ${course.title}`,
-      timestamp: new Date().toISOString(),
-      xp: 5
-    });
-    db.stats.xpPoints += 5;
+    // Add activity record for authenticated user
+    const userIndex = db.users.findIndex((u: any) => u.id === req.userId);
+    if (userIndex !== -1) {
+      const stats = db.users[userIndex].stats;
+      stats.recentActivity.unshift({
+        id: `act-${Date.now()}`,
+        type: 'chat_message',
+        title: `Asked AI Companion in ${course.title}`,
+        timestamp: new Date().toISOString(),
+        xp: 5
+      });
+      stats.xpPoints += 5;
+    }
     saveDB(db);
 
     res.json(result);
@@ -863,7 +1432,7 @@ ${lastUserMessage}
 });
 
 // API: Generate Certificates
-app.post('/api/certificates', (req, res) => {
+app.post('/api/certificates', authenticate, (req: any, res) => {
   try {
     const { courseId, userName } = req.body;
     if (!courseId || !userName) {
@@ -879,6 +1448,7 @@ app.post('/api/certificates', (req, res) => {
     const certId = `CERT-${courseId.replace('course-', '').toUpperCase()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
     const certificate = {
       id: certId,
+      userId: req.userId, // Link certificate to authenticated user!
       courseId,
       courseName: course.title,
       userName,
@@ -890,6 +1460,151 @@ app.post('/api/certificates', (req, res) => {
     saveDB(db);
 
     res.json(certificate);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Get My Certificates
+app.get('/api/certificates', authenticate, (req: any, res) => {
+  try {
+    const db = getDB();
+    const userCerts = db.certificates.filter((cert: any) => cert.userId === req.userId);
+    res.json(userCerts);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Generate AI Video Explainer for a course in a preferred language
+app.post('/api/video/generate', authenticate, async (req: any, res) => {
+  try {
+    const { courseId, language } = req.body;
+    if (!courseId) {
+      return res.status(400).json({ error: 'Missing courseId parameter' });
+    }
+    const targetLang = language || 'English';
+
+    const db = getDB();
+    const course = db.courses.find((c: any) => c.id === courseId);
+    if (!course) {
+      return res.status(404).json({ error: 'Course not found' });
+    }
+
+    // Check if we already have this exact video generated to save API quota
+    db.videos = db.videos || [];
+    const existingVideo = db.videos.find((v: any) => v.courseId === courseId && v.language.toLowerCase() === targetLang.toLowerCase() && v.userId === req.userId);
+    if (existingVideo) {
+      return res.json(existingVideo);
+    }
+
+    // Prepare structure outline
+    const courseContext = {
+      title: course.title,
+      description: course.description,
+      chapters: course.chapters.map((ch: any) => ({
+        title: ch.title,
+        description: ch.description,
+        lessons: ch.lessons.map((l: any) => l.title)
+      }))
+    };
+
+    const prompt = `You are an expert AI Video Producer and Educator.
+Your task is to take the following course outline and convert it into a professional, engaging, slide-by-slide AI Explainer Video script.
+The video represents an immersive multi-media lesson where a virtual AI presenter reads out a detailed explanation, accompanied by gorgeous visual slides.
+
+CRITICAL INSTRUCTION: All student-facing content, slide titles, slide bullet points, and the voiceover speech (spokenText) MUST be written entirely in the requested language: "${targetLang}".
+
+In the video explanation, you must:
+1. Explain every topic in thorough detail, going from fundamental principles up to an ADVANCED stage.
+2. Include at least one concrete, real-time real-world example in each slide's explanation/narrative.
+3. Use and describe a real-time GUI simulation or interactive visual layout in the "visualPrompt" field for each slide to represent the concepts visually.
+
+Course outline context:
+${JSON.stringify(courseContext, null, 2)}
+
+Please generate a sequence of 5 highly structured slides that explain the core themes, objectives, and modules of this course.
+Your response MUST be a single clean JSON object matching this schema:
+{
+  "videoTitle": "A catchy, motivating video title in ${targetLang}",
+  "estimatedDuration": "A simulated duration, e.g. '5 mins 20 secs'",
+  "slides": [
+    {
+      "slideNumber": 1,
+      "slideTitle": "Welcome & Headline (in ${targetLang})",
+      "slidePoints": ["Point 1 in ${targetLang}", "Point 2", "Point 3"],
+      "visualPrompt": "Detailed visual layout description for the slide showing GUI mockups, real-time graphics or active flowcharts (e.g. 'A high-fidelity modern dashboard GUI showing live metric streams and system architecture in real-time')",
+      "spokenText": "Thorough, detailed, and advanced stage narrative speech in ${targetLang} explaining the concepts with a real-time example. (100-150 words).",
+      "avatarExpression": "smiling"
+    }
+  ]
+}
+
+Make sure you write detailed, professional slidePoints and spokenText (must be valid, natural educational text in ${targetLang}). Do NOT mix English into the slidePoints or spokenText unless it is a standard technical term.
+Valid avatarExpression values are: "smiling", "thoughtful", "explaining", "pointing", "neutral".`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.5-flash',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            videoTitle: { type: Type.STRING },
+            estimatedDuration: { type: Type.STRING },
+            slides: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  slideNumber: { type: Type.INTEGER },
+                  slideTitle: { type: Type.STRING },
+                  slidePoints: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  visualPrompt: { type: Type.STRING },
+                  spokenText: { type: Type.STRING },
+                  avatarExpression: { type: Type.STRING }
+                },
+                required: ['slideNumber', 'slideTitle', 'slidePoints', 'visualPrompt', 'spokenText', 'avatarExpression']
+              }
+            }
+          },
+          required: ['videoTitle', 'estimatedDuration', 'slides']
+        }
+      }
+    });
+
+    const parsedData = JSON.parse(response.text || '{}');
+    
+    // Create database entry
+    const videoId = `vid-${Date.now()}`;
+    const newVideo = {
+      id: videoId,
+      userId: req.userId,
+      courseId,
+      language: targetLang,
+      videoTitle: parsedData.videoTitle || `${course.title} Explainer`,
+      estimatedDuration: parsedData.estimatedDuration || '3 minutes',
+      slides: parsedData.slides || [],
+      createdAt: new Date().toISOString()
+    };
+
+    db.videos.push(newVideo);
+    saveDB(db);
+
+    res.json(newVideo);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Get My Videos for a course
+app.get('/api/video/course/:courseId', authenticate, (req: any, res) => {
+  try {
+    const db = getDB();
+    db.videos = db.videos || [];
+    const userVideos = db.videos.filter((v: any) => v.courseId === req.params.courseId && v.userId === req.userId);
+    res.json(userVideos);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

@@ -3,8 +3,9 @@ import { Dashboard } from './components/Dashboard';
 import { UploadView } from './components/UploadView';
 import { CoursePlayer } from './components/CoursePlayer';
 import { Certificates } from './components/Certificates';
+import { AuthView } from './components/AuthView';
 import { Course, UserStats, Certificate } from './types';
-import { Brain, Zap, Flame, Trophy, Award, User, RefreshCw, Sparkles, Star } from 'lucide-react';
+import { Brain, Zap, Flame, Trophy, Award, User, RefreshCw, Sparkles, Star, LogOut } from 'lucide-react';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<'dashboard' | 'upload' | 'certificates' | 'player'>('dashboard');
@@ -22,6 +23,10 @@ export default function App() {
   });
   const [certificates, setCertificates] = useState<Certificate[]>([]);
   
+  // Auth States
+  const [token, setToken] = useState<string | null>(localStorage.getItem('auth_token'));
+  const [user, setUser] = useState<any | null>(null);
+
   // App-level loading states
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -29,24 +34,63 @@ export default function App() {
   // Graduation name dialog modal
   const [showGraduationModal, setShowGraduationModal] = useState(false);
   const [graduationCourseId, setGraduationCourseId] = useState<string | null>(null);
-  const [studentName, setStudentName] = useState('Alexander Mercer');
+  const [studentName, setStudentName] = useState('');
 
-  // Load stats, courses, and certificates on mount
+  // Load user profile, stats, courses, and certificates when token is set/changed
   useEffect(() => {
     const loadAppData = async () => {
+      if (!token) {
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
       try {
         setLoading(true);
-        // Load Stats
-        const statsRes = await fetch('/api/stats');
-        if (!statsRes.ok) throw new Error('Could not connect to database.');
-        const statsData = await statsRes.json();
-        setStats(statsData);
+        // 1. Load Profile
+        const meRes = await fetch('/api/auth/me', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        
+        if (!meRes.ok) {
+          // Token is invalid/expired
+          localStorage.removeItem('auth_token');
+          setToken(null);
+          setUser(null);
+          setLoading(false);
+          return;
+        }
 
-        // Load Courses
-        const coursesRes = await fetch('/api/courses');
-        if (!coursesRes.ok) throw new Error('Could not retrieve courses.');
-        const coursesData = await coursesRes.json();
-        setCourses(coursesData);
+        const meData = await meRes.json();
+        setUser(meData.user);
+        setStudentName(meData.user.name || '');
+
+        // 2. Load Stats
+        const statsRes = await fetch('/api/stats', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (statsRes.ok) {
+          const statsData = await statsRes.json();
+          setStats(statsData);
+        }
+
+        // 3. Load Courses
+        const coursesRes = await fetch('/api/courses', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (coursesRes.ok) {
+          const coursesData = await coursesRes.json();
+          setCourses(coursesData);
+        }
+
+        // 4. Load Certificates
+        const certsRes = await fetch('/api/certificates', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (certsRes.ok) {
+          const certsData = await certsRes.json();
+          setCertificates(certsData);
+        }
 
         setError(null);
       } catch (err: any) {
@@ -57,7 +101,23 @@ export default function App() {
     };
 
     loadAppData();
-  }, []);
+  }, [token]);
+
+  // Handle Authentication Success
+  const handleAuthSuccess = (newToken: string, authenticatedUser: any) => {
+    setToken(newToken);
+    setUser(authenticatedUser);
+    setStudentName(authenticatedUser.name || '');
+  };
+
+  // Handle Logout
+  const handleLogout = () => {
+    localStorage.removeItem('auth_token');
+    setToken(null);
+    setUser(null);
+    setCurrentView('dashboard');
+    setSelectedCourseId(null);
+  };
 
   // Update Stats in memory
   const updateStatsLocal = (newStats: UserStats) => {
@@ -69,7 +129,10 @@ export default function App() {
     try {
       const response = await fetch('/api/progress/lesson', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({ courseId, lessonId })
       });
 
@@ -78,7 +141,9 @@ export default function App() {
       updateStatsLocal(data.stats);
 
       // Re-fetch courses in background to update progress ratios
-      const coursesRes = await fetch('/api/courses');
+      const coursesRes = await fetch('/api/courses', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
       if (coursesRes.ok) {
         const coursesData = await coursesRes.json();
         setCourses(coursesData);
@@ -93,7 +158,10 @@ export default function App() {
     try {
       const response = await fetch('/api/progress/quiz', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({ courseId, quizId, score })
       });
 
@@ -130,7 +198,10 @@ export default function App() {
     try {
       const response = await fetch('/api/certificates', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({
           courseId: graduationCourseId,
           userName: studentName
@@ -156,37 +227,49 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col bg-[#111113] text-[#F8F7F4] font-sans selection:bg-[#FFD700] selection:text-[#111113]">
       {/* 1. Global Navigation Header */}
-      <header className="bg-[#111113] sticky top-0 z-50 px-6 py-5 flex items-center justify-between border-b-2 border-[#F8F7F4] max-w-[1400px] mx-auto w-full shrink-0">
-        <div 
-          onClick={() => { setCurrentView('dashboard'); setSelectedCourseId(null); }} 
-          className="flex flex-col cursor-pointer group select-none"
-        >
-          <h1 className="font-display font-extrabold text-[#F8F7F4] text-2xl tracking-tighter leading-none group-hover:text-amber-400 transition-colors uppercase">
-            E-Course AI
-          </h1>
-          <span className="text-[9px] font-mono text-[#F8F7F4]/60 tracking-widest mt-1.5 block uppercase">
-            Enterprise Platform // v.2.4.0
-          </span>
-        </div>
-
-        {/* Dynamic header metrics */}
-        <div className="flex items-center gap-4">
-          {/* XP Badge */}
-          <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 border border-[#F8F7F4]/20 text-[#FFD700] font-mono text-xs font-bold bg-white/5">
-            <span>[XP: {stats.xpPoints}]</span>
+      {user && (
+        <header className="bg-[#111113] sticky top-0 z-50 px-6 py-5 flex items-center justify-between border-b-2 border-[#F8F7F4] max-w-[1400px] mx-auto w-full shrink-0">
+          <div 
+            onClick={() => { setCurrentView('dashboard'); setSelectedCourseId(null); }} 
+            className="flex flex-col cursor-pointer group select-none"
+          >
+            <h1 className="font-display font-extrabold text-[#F8F7F4] text-2xl tracking-tighter leading-none group-hover:text-amber-400 transition-colors uppercase">
+              E-Course AI
+            </h1>
+            <span className="text-[9px] font-mono text-[#F8F7F4]/60 tracking-widest mt-1.5 block uppercase">
+              Enterprise Platform // v.2.4.0
+            </span>
           </div>
 
-          {/* Streak Badge */}
-          <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 border border-[#F8F7F4]/20 text-[#F8F7F4] font-mono text-xs font-bold bg-white/5">
-            <span>[STREAK: {stats.learningStreak} DAYS]</span>
-          </div>
+          {/* Dynamic header metrics */}
+          <div className="flex items-center gap-4">
+            {/* XP Badge */}
+            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 border border-[#F8F7F4]/20 text-[#FFD700] font-mono text-xs font-bold bg-white/5">
+              <span>[XP: {stats.xpPoints}]</span>
+            </div>
 
-          {/* Profile pill */}
-          <div className="flex items-center gap-2 px-3 py-1.5 border border-[#F8F7F4] text-xs text-[#F8F7F4] font-bold font-mono bg-white/5">
-            <span>[STUDENT]</span>
+            {/* Streak Badge */}
+            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 border border-[#F8F7F4]/20 text-[#F8F7F4] font-mono text-xs font-bold bg-white/5">
+              <span>[STREAK: {stats.learningStreak} DAYS]</span>
+            </div>
+
+            {/* Profile pill */}
+            <div className="flex items-center gap-2 px-3 py-1.5 border border-[#F8F7F4] text-xs text-[#F8F7F4] font-bold font-mono bg-white/5 uppercase">
+              <span>[{user.name}]</span>
+            </div>
+
+            {/* Logout button */}
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-1 px-3 py-1.5 border border-red-500/40 text-red-400 hover:text-red-300 hover:border-red-500/60 font-mono text-xs font-bold bg-white/5 transition uppercase cursor-pointer"
+              title="Logout Profile"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">[Logout]</span>
+            </button>
           </div>
-        </div>
-      </header>
+        </header>
+      )}
 
       {/* 2. Main Content viewport switcher */}
       <main className="flex-1 overflow-y-auto w-full max-w-[1400px] mx-auto px-6 py-8">
@@ -215,12 +298,16 @@ export default function App() {
               Reload application
             </button>
           </div>
+        ) : !user ? (
+          <AuthView onAuthSuccess={handleAuthSuccess} />
         ) : (
           <div className="w-full h-full animate-fade-in">
             {currentView === 'dashboard' && (
               <Dashboard 
                 stats={stats}
                 courses={courses}
+                token={token}
+                onUpdateStats={updateStatsLocal}
                 onSelectCourse={handleSelectCourse}
                 onNavigateToUpload={() => setCurrentView('upload')}
                 onNavigateToCertificates={() => setCurrentView('certificates')}
